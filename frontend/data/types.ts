@@ -1,6 +1,9 @@
 // 类型定义
 export type TransactionType = 'expense' | 'income' | 'ignore'
 
+// 时间范围模式：近一周 / 近一月 / 本月 / 历史月份
+export type RangeMode = 'week' | '30d' | 'month' | 'history'
+
 export interface Expense {
   id: number
   amount: number
@@ -37,6 +40,12 @@ export interface Budget {
 
 export interface TrendPoint {
   month: string
+  total: number
+}
+
+// 按天的支出聚合点（右栏当月支出图）
+export interface DailyTrendPoint {
+  date: string
   total: number
 }
 
