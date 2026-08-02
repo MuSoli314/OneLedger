@@ -124,13 +124,45 @@ OneLedger/
 ├── index.html                    # 入口 HTML
 ├── logo.png                      # 应用图标源图（1024×1024，更换 Logo 见下方说明）
 ├── README.md                     # 产品文档
-└── package.json                  # 项目依赖
+├── package.json                  # 项目依赖
+└── .github/workflows/release.yml # 发版自动构建安装包（打标签触发）
 ```
 
 **构建产物**:
 - Mac .app: `backend/target/release/bundle/macos/一笔.app`（直接打开）
 - Mac 安装包: `backend/target/release/bundle/dmg/一笔_xxx.dmg`
 - Windows .exe: 在 Windows 电脑上运行 `npm run tauri:build` 生成
+
+---
+
+## 版本发布流程（GitHub 自动构建安装包）
+
+发版后，访客可在 GitHub 项目页面的 **Releases（发行版）** 区域直接下载 Mac / Windows 安装包。整个构建由 GitHub 服务器自动完成，**不需要 Windows 电脑**。
+
+### 发版步骤（三步）
+
+1. 修改版本号：打开 `backend/tauri.conf.json`，把 `version` 字段改成新版本号（如 `2.1.0`）。Tauri 打包版本以该文件为准；建议顺手把 `backend/Cargo.toml` 的 `version` 也改成一致。
+2. 提交：`git add -A && git commit -m "发布 v2.1.0"`
+3. 打标签并推送：`git tag v2.1.0 && git push && git push origin v2.1.0`（标签名 `v` 后面的数字必须与步骤 1 的版本号一致）
+
+等约 10~20 分钟，Releases 页面就会出现安装包，自动发布无需人工操作。
+
+### 每个平台得到什么文件
+
+| 平台 | 文件 | 说明 |
+|------|------|------|
+| Mac | `一笔_<版本>_universal.dmg` | 通用版，苹果 M 系列芯片和 Intel 都支持（下载它） |
+| Mac | `一笔.app.tar.gz` | 压缩包，普通用户忽略 |
+| Windows | `一笔_<版本>_x64-setup.exe` | 安装程序（下载它） |
+| Windows | `一笔_<版本>_x64_en-US.msi` | 另一种安装包，可忽略 |
+
+### 无签名证书的提示（现状）
+
+应用暂未购买数字签名证书，访客首次打开会有安全提示，属正常现象：
+- **Mac**：右键应用图标 →「打开」即可运行
+- **Windows**：点「更多信息」→「仍要运行」
+
+将来若购买 Apple 开发者证书和 Windows 签名证书，可在发布流程中加入签名环节，届时访客可正常双击打开。
 
 **当前版本**: v2.0.0（2026-07-22 全面代码审查修复版）
 
