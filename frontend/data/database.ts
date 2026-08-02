@@ -185,33 +185,6 @@ export async function getAllExpenses(): Promise<Expense[]> {
   return database.select<Expense[]>('SELECT * FROM expenses ORDER BY date DESC, id ASC')
 }
 
-// 月度统计
-export async function getMonthlyStats(month: string): Promise<{
-  total: number
-  count: number
-  byCategory: { category_l1: string; total: number; count: number }[]
-}> {
-  const database = await getDb()
-
-  const summary = await database.select<{ total: number; count: number }[]>(
-    "SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as count FROM expenses WHERE strftime('%Y-%m', date)=$1 AND type='expense'",
-    [month]
-  )
-
-  const byCategory = await database.select<
-    { category_l1: string; total: number; count: number }[]
-  >(
-    "SELECT category_l1, SUM(amount) as total, COUNT(*) as count FROM expenses WHERE strftime('%Y-%m', date)=$1 AND type='expense' GROUP BY category_l1 ORDER BY total DESC",
-    [month]
-  )
-
-  return {
-    total: summary[0]?.total ?? 0,
-    count: summary[0]?.count ?? 0,
-    byCategory,
-  }
-}
-
 // 按日期范围的每日支出聚合（右栏「当月支出」图；categoryL1 传值则只看该大类）
 export async function getDailyTotals(startDate: string, endDate: string, categoryL1?: string): Promise<DailyTrendPoint[]> {
   const database = await getDb()
