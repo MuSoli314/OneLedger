@@ -129,8 +129,8 @@ OneLedger/
 ```
 
 **构建产物**:
-- Mac .app: `backend/target/release/bundle/macos/一笔.app`（直接打开）
-- Mac 安装包: `backend/target/release/bundle/dmg/一笔_xxx.dmg`
+- Mac .app: `backend/target/release/bundle/macos/OneLedger.app`（直接打开）
+- Mac 安装包: `backend/target/release/bundle/dmg/OneLedger_xxx.dmg`
 - Windows .exe: 在 Windows 电脑上运行 `npm run tauri:build` 生成
 
 ---
@@ -151,10 +151,12 @@ OneLedger/
 
 | 平台 | 文件 | 说明 |
 |------|------|------|
-| Mac | `一笔_<版本>_universal.dmg` | 通用版，苹果 M 系列芯片和 Intel 都支持（下载它） |
-| Mac | `一笔.app.tar.gz` | 压缩包，普通用户忽略 |
-| Windows | `一笔_<版本>_x64-setup.exe` | 安装程序（下载它） |
-| Windows | `一笔_<版本>_x64_en-US.msi` | 另一种安装包，可忽略 |
+| Mac | `OneLedger_<版本>_universal.dmg` | 通用版，苹果 M 系列芯片和 Intel 都支持（下载它） |
+| Mac | `OneLedger.app.tar.gz` | 压缩包，普通用户忽略 |
+| Windows | `OneLedger_<版本>_x64-setup.exe` | 安装程序（下载它） |
+| Windows | `OneLedger_<版本>_x64_en-US.msi` | 另一种安装包，可忽略 |
+
+> 📌 **为什么安装包文件名是英文**：Windows 的 MSI 打包工具（WiX）不支持中文文件名，中文产品名会导致打包失败。因此安装包的产品名使用英文 **OneLedger**。软件打开后的窗口标题和界面文字仍然是中文「一笔」，不受影响。（2026-08-02 决定）
 
 ### 无签名证书的提示（现状）
 
@@ -170,6 +172,7 @@ OneLedger/
 > 首页卡片跟随筛选月份、CSV 导出转义、数据库 schema 统一由前端维护（Rust 端不再重复建表）、
 > 小类拖拽 ref 修复、编辑老记录不再被模板覆盖、行内记账金额校验、饼图颜色固定、趋势图补零、
 > 弹窗支持 Esc 关闭。
+> （2026-08-02 正式发版补充：Windows MSI 打包工具不支持中文文件名，安装包产品名改用英文 OneLedger，软件界面仍为中文「一笔」。）
 
 ---
 

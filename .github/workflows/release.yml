@@ -65,19 +65,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 一笔 v__VERSION__
+          releaseName: OneLedger v__VERSION__
           releaseBody: |
-            一笔 v__VERSION__ 发布了 🎉
+            OneLedger v__VERSION__ 发布了 🎉
 
             ## 📥 下载安装包
 
-            - **🍎 Mac**：下载 `一笔_v__VERSION___universal.dmg`（通用版，苹果 M 系列芯片和 Intel 老 Mac 都支持）
-            - **🪟 Windows**：下载 `一笔_v__VERSION___x64-setup.exe`（安装程序）
+            - **🍎 Mac**：下载 `OneLedger_v__VERSION___universal.dmg`（通用版，苹果 M 系列芯片和 Intel 老 Mac 都支持）
+            - **🪟 Windows**：下载 `OneLedger_v__VERSION___x64-setup.exe`（安装程序）
 
-            > Mac 版还会附带一个 `一笔.app.tar.gz` 压缩包，普通用户忽略它，下载 `.dmg` 文件即可。
+            > Mac 版还会附带一个 `OneLedger.app.tar.gz` 压缩包，普通用户忽略它，下载 `.dmg` 文件即可。
 
             ## ⚠️ 首次打开提示（目前应用没有付费签名证书，属正常现象）
 
-            - **Mac**：打开后系统会提示"无法验证开发者"，请**右键点击「一笔」应用图标 → 选择「打开」**，再点一次"打开"即可运行。
+            - **Mac**：打开后系统会提示"无法验证开发者"，请**右键点击「OneLedger」应用图标 → 选择「打开」**，再点一次"打开"即可运行。
             - **Windows**：会提示"已保护你的电脑"，请点击**「更多信息」→「仍要运行」**。
           includeUpdaterJson: false
