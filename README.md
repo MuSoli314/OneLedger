@@ -2,6 +2,8 @@
 
 > 轻量级桌面记账应用 · 支持 Windows / Mac
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 一笔（OneLedger）是一款面向个人用户的桌面消费记账软件，支持 **Windows** 和 **Mac** 双平台。应用体积小（约 13 MB）、启动快、操作直观，帮助用户轻松记录日常花销并掌握支出情况。
 
 ---
