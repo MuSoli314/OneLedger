@@ -1,5 +1,5 @@
 import Database from '@tauri-apps/plugin-sql'
-import type { Expense, ExpenseInput, Budget, TrendPoint, CategoryWithChildren, TransactionType } from './types'
+import type { Expense, ExpenseInput, Budget, TrendPoint, CategoryWithChildren, TransactionType, DailyTrendPoint, MonthlyStats } from './types'
 import { categories as defaultCategories } from './categories'
 
 let db: Database | null = null
@@ -133,6 +133,8 @@ export async function deleteExpensesByCategory(date: string, category_l1: string
 // 注意：不传 limit 时默认取 10000 条（避免记录多时被悄悄截断）
 export async function listExpenses(params?: {
   month?: string // 格式: YYYY-MM
+  startDate?: string // 格式: YYYY-MM-DD（含当天）
+  endDate?: string // 格式: YYYY-MM-DD（含当天）
   category_l1?: string
   keyword?: string
   limit?: number
@@ -146,6 +148,16 @@ export async function listExpenses(params?: {
   if (params?.month) {
     conditions.push(`strftime('%Y-%m', date)=$${idx}`)
     values.push(params.month)
+    idx++
+  }
+  if (params?.startDate) {
+    conditions.push(`date >= $${idx}`)
+    values.push(params.startDate)
+    idx++
+  }
+  if (params?.endDate) {
+    conditions.push(`date <= $${idx}`)
+    values.push(params.endDate)
     idx++
   }
   if (params?.category_l1) {
@@ -193,6 +205,39 @@ export async function getMonthlyStats(month: string): Promise<{
     [month]
   )
 
+  return {
+    total: summary[0]?.total ?? 0,
+    count: summary[0]?.count ?? 0,
+    byCategory,
+  }
+}
+
+// 按日期范围的每日支出聚合（右栏「当月支出」图；categoryL1 传值则只看该大类）
+export async function getDailyTotals(startDate: string, endDate: string, categoryL1?: string): Promise<DailyTrendPoint[]> {
+  const database = await getDb()
+  const conditions = ['date >= $1', 'date <= $2', "type='expense'"]
+  const values: string[] = [startDate, endDate]
+  if (categoryL1) {
+    conditions.push('category_l1=$3')
+    values.push(categoryL1)
+  }
+  const sql = `SELECT date, SUM(amount) as total FROM expenses WHERE ${conditions.join(' AND ')} GROUP BY date ORDER BY date ASC`
+  return database.select<DailyTrendPoint[]>(sql, values)
+}
+
+// 按日期范围的分类排行（替代 getMonthlyStats 的月份版本）
+export async function getStatsByRange(startDate: string, endDate: string): Promise<MonthlyStats> {
+  const database = await getDb()
+  const summary = await database.select<{ total: number; count: number }[]>(
+    "SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as count FROM expenses WHERE date >= $1 AND date <= $2 AND type='expense'",
+    [startDate, endDate]
+  )
+  const byCategory = await database.select<
+    { category_l1: string; total: number; count: number }[]
+  >(
+    "SELECT category_l1, SUM(amount) as total, COUNT(*) as count FROM expenses WHERE date >= $1 AND date <= $2 AND type='expense' GROUP BY category_l1 ORDER BY total DESC",
+    [startDate, endDate]
+  )
   return {
     total: summary[0]?.total ?? 0,
     count: summary[0]?.count ?? 0,
