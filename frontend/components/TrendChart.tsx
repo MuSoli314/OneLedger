@@ -52,11 +52,12 @@ function LineChartBase({ data, color = '#6366f1', height = 220, tickFormatter, e
   )
 }
 
-/** 近 12 月月度支出趋势（月份维度，X 轴显示 YYYY-MM） */
-export function TrendLineChart({ data, height }: { data: { month: string; total: number }[]; height?: number }) {
+/** 近 12 月月度支出趋势（月份维度，X 轴显示 YYYY-MM；color 区分「全天」与选中某大类） */
+export function TrendLineChart({ data, color, height }: { data: { month: string; total: number }[]; color?: string; height?: number }) {
   return (
     <LineChartBase
       data={data.map((d) => ({ key: d.month, total: d.total }))}
+      color={color}
       height={height}
     />
   )

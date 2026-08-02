@@ -229,16 +229,18 @@ export async function getMonths(): Promise<string[]> {
 
 // ========== 趋势数据 ==========
 
-// 获取过去 N 个月的月度支出趋势
-export async function getTrendData(months: number = 12): Promise<TrendPoint[]> {
+// 获取过去 N 个月的月度支出趋势（categoryL1 传值则只看该大类）
+export async function getTrendData(months: number = 12, categoryL1?: string): Promise<TrendPoint[]> {
   const database = await getDb()
   const n = Math.max(1, Math.floor(months))
   const rows = await database.select<TrendPoint[]>(
     `SELECT strftime('%Y-%m', date) as month, SUM(amount) as total
      FROM expenses
-     WHERE date >= date('now', 'localtime', '-' || CAST($1 AS TEXT) || ' months', 'start of month') AND type='expense'
+     WHERE date >= date('now', 'localtime', '-' || CAST($1 AS TEXT) || ' months', 'start of month')
+       AND type='expense'
+       ${categoryL1 ? `AND category_l1 = $2` : ''}
      GROUP BY month ORDER BY month ASC`,
-    [n]
+    categoryL1 ? [n, categoryL1] : [n]
   )
   return rows
 }

@@ -51,6 +51,7 @@ export default function HomePage() {
   const [historyMonth, setHistoryMonth] = useState('') // 仅 rangeMode='history' 时有效
   const [months, setMonths] = useState<string[]>([])
   const [trendData, setTrendData] = useState<TrendPoint[]>([])
+  const [trendCategory, setTrendCategory] = useState('') // '' 表示「全天」（所有大类按月汇总）
   const [loading, setLoading] = useState(true)
   const [budget, setBudgetData] = useState<Budget | null>(null)
   const [showBudget, setShowBudget] = useState(false)
@@ -98,10 +99,10 @@ export default function HomePage() {
     }
   }, [range])
 
-  // 顶部趋势图固定近 12 个月，不随时间范围切换
+  // 顶部趋势图固定近 12 个月，不随时间范围切换；可按大类筛选（随 trendCategory 变化）
   useEffect(() => {
-    getTrendData(12).then(setTrendData).catch(console.error)
-  }, [])
+    getTrendData(12, trendCategory || undefined).then(setTrendData).catch(console.error)
+  }, [trendCategory])
 
   // 预算（近一周/近一月不显示预算，置空）
   const refreshBudget = useCallback(() => {
@@ -256,10 +257,26 @@ export default function HomePage() {
 
   return (
     <div>
-      {/* 顶部全宽趋势图（近 12 个月，固定不变，不随范围切换） */}
+      {/* 顶部全宽趋势图（近 12 个月，固定不变，不随范围切换；可下拉筛选某大类） */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 mb-6">
-        <h3 className="text-sm font-semibold text-slate-700 mb-3">📈 近12月支出趋势</h3>
-        <TrendLineChart data={filledTrend} height={260} />
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <h3 className="text-sm font-semibold text-slate-700">📈 近12月支出趋势</h3>
+          <select
+            value={trendCategory}
+            onChange={(e) => setTrendCategory(e.target.value)}
+            className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-600 focus:outline-none focus:border-primary"
+          >
+            <option value="">📊 全天</option>
+            {categories.map((c) => (
+              <option key={c.name} value={c.name}>{c.icon} {c.name}</option>
+            ))}
+          </select>
+        </div>
+        <TrendLineChart
+          data={filledTrend}
+          color={trendCategory ? '#f59e0b' : '#6366f1'}
+          height={260}
+        />
       </div>
 
       {/* 左右两栏 */}
