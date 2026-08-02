@@ -102,6 +102,7 @@ Claude Code 为本项目生成的**记忆文件**和**工作文档**存放在项
 - [x] 分类管理（在线新增/删除/修改分类与子分类）
 - [x] 默认小类模板（标记默认小类，记账时自动填充）
 - [x] 分类图标在线编辑（emoji 选择器）
+- [x] 首页改版（两栏仪表盘布局 + 时间范围联动：近一周 / 近一月 / 本月 / 历史月份）
 
 ---
 
@@ -123,11 +124,11 @@ OneLedger/
 │   │   ├── ExpenseList.tsx       # 消费记录列表（按日分组）
 │   │   ├── CategoryPicker.tsx    # 二级分类选择器
 │   │   ├── BudgetSetup.tsx       # 预算设置弹窗
-│   │   ├── TrendChart.tsx        # 趋势图表（折线图 + 饼图）
+│   │   ├── TrendChart.tsx        # 趋势图表（折线图：月度趋势 + 按天趋势）
+│   │   ├── StatsPanel.tsx        # 首页右栏统计面板（当月支出图 + 分类排行）
 │   │   └── ConfirmDialog.tsx     # 确认弹窗组件
 │   └── pages/
-│       ├── HomePage.tsx          # 首页：记录列表 + 预算概览
-│       ├── StatsPage.tsx         # 统计页：趋势图表 + 分类排行
+│       ├── HomePage.tsx          # 首页：两栏仪表盘（趋势图 + 记录列表 + 统计面板）
 │       └── CategoryManager.tsx   # 分类管理页（增删改 + 默认模板）
 ├── backend/                       # Rust 原生后端（Tauri）
 │   ├── src/
@@ -184,6 +185,10 @@ OneLedger/
 > 小类拖拽 ref 修复、编辑老记录不再被模板覆盖、行内记账金额校验、饼图颜色固定、趋势图补零、
 > 弹窗支持 Esc 关闭。
 > （2026-08-02 正式发版补充：Windows MSI 打包工具不支持中文文件名，安装包产品名改用英文 OneLedger，软件界面仍为中文「一笔」。）
+>
+> 2026-08-02 首页改版：两栏仪表盘布局（顶部全宽近 12 月趋势图 + 左右两栏），新增时间范围选择器
+> （近一周 / 近一月 / 本月 / 历史月份），蓝色卡、记账列表、右栏「当月支出」图与分类排行联动；
+> 删除独立统计页 /stats 与饼图组件。
 
 ---
 
@@ -264,6 +269,7 @@ CategoryContext.tsx         ←── 拉取分类树，全局共享避免重复
 - **CSV 导出**：`expensesToCSV()` 函数使用 BOM + 双引号转义，确保 Excel 正确识别中文字符。
 - **拖拽排序**：`@dnd-kit` 实现分类管理页面的拖拽重排，`reorderCategories` / `reorderSubCategories` 批量写入 `sort_order`。
 - **预算颜色**：Tailwind 主题色 `--color-primary: #6366f1`（正常）、`amber` 接近（≥80%）、`red` 超支。
+- **时间范围联动**：首页通过 `dateUtils.getRangeDates` 计算起止日（本地日期），`database.ts` 的 `listExpenses(startDate/endDate)` / `getDailyTotals` / `getStatsByRange` 按范围查询聚合，蓝色卡 / 列表 / 右栏图 / 排行随之联动。顶部趋势图固定近 12 月不随范围切换。
 
 ### 常用命令
 
