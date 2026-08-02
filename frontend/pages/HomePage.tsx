@@ -3,17 +3,54 @@ import ExpenseList from '../components/ExpenseList'
 import ExpenseForm from '../components/ExpenseForm'
 import BudgetSetup from '../components/BudgetSetup'
 import ConfirmDialog from '../components/ConfirmDialog'
-import { listExpenses, deleteExpense, deleteExpensesByDate, deleteExpensesByCategory, updateExpense, getMonths, getBudget, getAllExpenses, expensesToCSV, addExpense } from '../data/database'
-import { localDateString, localMonthString, formatMonth } from '../data/dateUtils'
+import StatsPanel from '../components/StatsPanel'
+import { TrendLineChart } from '../components/TrendChart'
+import {
+  listExpenses,
+  deleteExpense,
+  deleteExpensesByDate,
+  deleteExpensesByCategory,
+  updateExpense,
+  getMonths,
+  getBudget,
+  getAllExpenses,
+  expensesToCSV,
+  addExpense,
+  getTrendData,
+} from '../data/database'
+import { localDateString, localMonthString, formatMonth, getRangeDates } from '../data/dateUtils'
 import { useCategories } from '../contexts/CategoryContext'
-import type { Expense, Budget, TransactionType } from '../data/types'
+import type { Expense, Budget, TransactionType, RangeMode, TrendPoint } from '../data/types'
+
+// 把趋势数据补齐为连续 N 个月（缺记录的月份补 0），保证折线不断档
+function fillTrendGaps(data: TrendPoint[], months: number): TrendPoint[] {
+  const map = new Map(data.map((d) => [d.month, d.total]))
+  const result: TrendPoint[] = []
+  const now = new Date()
+  for (let i = months - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    result.push({ month: key, total: map.get(key) ?? 0 })
+  }
+  return result
+}
+
+// 时间范围选择器里的三个固定按钮（历史月份是单独的下拉框）
+const RANGE_PILLS: { key: RangeMode; label: string }[] = [
+  { key: 'week', label: '近一周' },
+  { key: '30d', label: '近一月' },
+  { key: 'month', label: '本月' },
+]
 
 export default function HomePage() {
   const { categories } = useCategories()
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [showForm, setShowForm] = useState(false)
-  const [filterMonth, setFilterMonth] = useState('')
+  // 时间范围：近一周 / 近一月 / 本月（默认）/ 历史月份
+  const [rangeMode, setRangeMode] = useState<RangeMode>('month')
+  const [historyMonth, setHistoryMonth] = useState('') // 仅 rangeMode='history' 时有效
   const [months, setMonths] = useState<string[]>([])
+  const [trendData, setTrendData] = useState<TrendPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [budget, setBudgetData] = useState<Budget | null>(null)
   const [showBudget, setShowBudget] = useState(false)
@@ -25,14 +62,31 @@ export default function HomePage() {
   const [addedDates, setAddedDates] = useState<string[]>([])
 
   const thisMonth = localMonthString()
-  // 卡片展示的月份：筛选了月份就跟随筛选，否则显示本月
-  const displayMonth = filterMonth || thisMonth
-  const isThisMonth = displayMonth === thisMonth
 
+  // 当前时间范围的本地起止日期
+  const range = useMemo(() => getRangeDates(rangeMode, historyMonth), [rangeMode, historyMonth])
+
+  // 预算只在「本月 / 历史月份」显示；归属月份跟随所选月份
+  const showBudgetPanel = rangeMode === 'month' || rangeMode === 'history'
+  const budgetMonth = rangeMode === 'history' ? historyMonth : thisMonth
+  const isThisMonth = rangeMode === 'month'
+
+  // 卡片左上角标签 + 金额标签
+  const rangeLabel =
+    rangeMode === 'week' ? '近一周'
+      : rangeMode === '30d' ? '近一月'
+      : rangeMode === 'month' ? '本月'
+      : formatMonth(historyMonth)
+  const amountLabel =
+    rangeMode === 'week' ? '近一周支出'
+      : rangeMode === '30d' ? '近一月支出'
+      : isThisMonth ? '本月支出' : '当月支出'
+
+  // 加载列表（按时间范围筛选）+ 历史月份下拉数据
   const loadData = useCallback(async () => {
     try {
       const [data, m] = await Promise.all([
-        listExpenses(filterMonth ? { month: filterMonth } : undefined),
+        listExpenses({ startDate: range.start, endDate: range.end }),
         getMonths(),
       ])
       setExpenses(data)
@@ -42,12 +96,21 @@ export default function HomePage() {
     } finally {
       setLoading(false)
     }
-  }, [filterMonth])
+  }, [range])
 
-  // 加载展示月份的预算（弹窗保存后通过 refreshBudget 显式刷新）
+  // 顶部趋势图固定近 12 个月，不随时间范围切换
+  useEffect(() => {
+    getTrendData(12).then(setTrendData).catch(console.error)
+  }, [])
+
+  // 预算（近一周/近一月不显示预算，置空）
   const refreshBudget = useCallback(() => {
-    getBudget(displayMonth).then(setBudgetData).catch(console.error)
-  }, [displayMonth])
+    if (!showBudgetPanel) {
+      setBudgetData(null)
+      return
+    }
+    getBudget(budgetMonth).then(setBudgetData).catch(console.error)
+  }, [showBudgetPanel, budgetMonth])
 
   useEffect(() => {
     refreshBudget()
@@ -57,7 +120,10 @@ export default function HomePage() {
     loadData()
   }, [loadData])
 
-  // 已有记录的日期集合（用于"添加日期"查重）
+  // 顶部趋势图补零
+  const filledTrend = useMemo(() => fillTrendGaps(trendData, 12), [trendData])
+
+  // 已有记录的日期集合（用于"添加日期"查重）— 只覆盖当前时间范围
   const existingDates = useMemo(() => new Set(expenses.map((e) => e.date)), [expenses])
 
   // 添加日期弹窗：按 Esc 关闭
@@ -144,36 +210,36 @@ export default function HomePage() {
     setShowForm(false)
   }
 
-  // 计算展示月份的合计（支出、收入分开）
+  // 卡片统计：expenses 已按时间范围筛选，直接汇总
   const expenseTotal = expenses
-    .filter((e) => e.date.startsWith(displayMonth) && e.type === 'expense')
+    .filter((e) => e.type === 'expense')
     .reduce((sum, e) => sum + e.amount, 0)
 
   const incomeTotal = expenses
-    .filter((e) => e.date.startsWith(displayMonth) && e.type === 'income')
+    .filter((e) => e.type === 'income')
     .reduce((sum, e) => sum + e.amount, 0)
 
-  const monthCount = expenses.filter((e) => e.date.startsWith(displayMonth)).length
+  const recordCount = expenses.length
 
   // 预算进度
-  const budgetPct = budget?.amount && budget.amount > 0
+  const budgetPct = !!budget?.amount && budget.amount > 0
     ? Math.min((expenseTotal / budget.amount) * 100, 100)
     : 0
-  const overBudget = budget?.amount && budget.amount > 0 && expenseTotal > budget.amount
-  const nearBudget = budget?.amount && budget.amount > 0 && budgetPct >= 80 && !overBudget
+  const overBudget = showBudgetPanel && !!budget?.amount && budget.amount > 0 && expenseTotal > budget.amount
+  const nearBudget = showBudgetPanel && !!budget?.amount && budget.amount > 0 && budgetPct >= 80 && !overBudget
 
-  // 导出
+  // 导出（导出全部记录，与时间范围无关）
   const handleExport = async () => {
     try {
       const all = await getAllExpenses()
       // 排序：按日期降序 → 按固定大类顺序 → 按创建时间升序（和列表显示一致）
       const categoryOrder = new Map(categories.map((c, i) => [c.name, i]))
       all.sort((a, b) => {
-        if (a.date !== b.date) return b.date.localeCompare(a.date) // 日期降序
+        if (a.date !== b.date) return b.date.localeCompare(a.date)
         const aCat = categoryOrder.get(a.category_l1) ?? 99
         const bCat = categoryOrder.get(b.category_l1) ?? 99
-        if (aCat !== bCat) return aCat - bCat                     // 大类按固定顺序
-        return a.id - b.id                                        // 同大类按添加顺序
+        if (aCat !== bCat) return aCat - bCat
+        return a.id - b.id
       })
       const csv = expensesToCSV(all)
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
@@ -190,127 +256,172 @@ export default function HomePage() {
 
   return (
     <div>
-      {/* 月度概览卡片 */}
-      <div className={`bg-gradient-to-br rounded-2xl p-5 text-white mb-6 shadow-lg transition-all ${
-        overBudget
-          ? 'from-red-500 to-red-600 shadow-red-500/30'
-          : nearBudget
-          ? 'from-amber-500 to-amber-600 shadow-amber-500/30'
-          : 'from-primary to-primary-dark shadow-primary/20'
-      }`}>
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-sm opacity-80">
-            {formatMonth(displayMonth)}
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleExport}
-              className="bg-white/20 hover:bg-white/30 text-xs rounded-lg px-2 py-1 transition-colors"
-              title="导出为 CSV"
-            >
-              导出
-            </button>
-            <select
-              value={filterMonth}
-              onChange={(e) => setFilterMonth(e.target.value)}
-              className="bg-white/20 text-white text-xs rounded-lg px-2 py-1 border border-white/20 focus:outline-none"
-            >
-              <option value="" className="text-slate-800">全部月份</option>
-              {months.map((m) => (
-                <option key={m} value={m} className="text-slate-800">
-                  {m.replace('-', '年')}月
-                </option>
+      {/* 顶部全宽趋势图（近 12 个月，固定不变，不随范围切换） */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 mb-6">
+        <h3 className="text-sm font-semibold text-slate-700 mb-3">📈 近12月支出趋势</h3>
+        <TrendLineChart data={filledTrend} height={260} />
+      </div>
+
+      {/* 左右两栏 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        {/* ===== 左栏：蓝色概览卡 + 记账列表 ===== */}
+        <div className="space-y-6">
+          {/* 蓝色概览卡 */}
+          <div className={`bg-gradient-to-br rounded-2xl p-5 text-white shadow-lg transition-all ${
+            overBudget
+              ? 'from-red-500 to-red-600 shadow-red-500/30'
+              : nearBudget
+              ? 'from-amber-500 to-amber-600 shadow-amber-500/30'
+              : 'from-primary to-primary-dark shadow-primary/20'
+          }`}>
+            {/* 第一行：范围标签 + 导出 */}
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm opacity-80">{rangeLabel}</span>
+              <button
+                onClick={handleExport}
+                className="bg-white/20 hover:bg-white/30 text-xs rounded-lg px-2 py-1 transition-colors"
+                title="导出为 CSV"
+              >
+                导出
+              </button>
+            </div>
+
+            {/* 时间范围选择器 */}
+            <div className="flex items-center gap-1.5 mb-4 flex-wrap">
+              {RANGE_PILLS.map((p) => (
+                <button
+                  key={p.key}
+                  onClick={() => setRangeMode(p.key)}
+                  className={`text-xs rounded-lg px-2.5 py-1 transition-colors ${
+                    rangeMode === p.key
+                      ? 'bg-white/30 font-semibold'
+                      : 'bg-white/10 hover:bg-white/20'
+                  }`}
+                >
+                  {p.label}
+                </button>
               ))}
-            </select>
+              <select
+                value={rangeMode === 'history' ? historyMonth : ''}
+                onChange={(e) => {
+                  if (!e.target.value) return
+                  setHistoryMonth(e.target.value)
+                  setRangeMode('history')
+                }}
+                className={`text-xs rounded-lg px-2 py-1 border border-white/20 focus:outline-none ${
+                  rangeMode === 'history'
+                    ? 'bg-white/30 text-white'
+                    : 'bg-white/10 text-white/80'
+                }`}
+              >
+                <option value="" className="text-slate-800">历史月份▾</option>
+                {months.map((m) => (
+                  <option key={m} value={m} className="text-slate-800">
+                    {formatMonth(m)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 金额区域 */}
+            <div className="flex items-end justify-between">
+              <div>
+                <div className="text-sm opacity-80 mb-1">{amountLabel}</div>
+                <div className="text-3xl font-bold tabular-nums">
+                  ¥{expenseTotal.toFixed(2)}
+                </div>
+                {incomeTotal > 0 && (
+                  <div className="text-sm opacity-70 mt-1">
+                    💰 收入 ¥{incomeTotal.toFixed(2)}
+                  </div>
+                )}
+                <div className="text-sm opacity-60 mt-1">
+                  共 {recordCount} 笔记录
+                </div>
+              </div>
+
+              {/* 预算区域（仅本月/历史月份显示） */}
+              {showBudgetPanel && (
+                <div className="text-right">
+                  <button
+                    onClick={() => setShowBudget(true)}
+                    className="text-xs bg-white/20 hover:bg-white/30 rounded-lg px-2.5 py-1 transition-colors"
+                  >
+                    {budget?.amount ? '修改预算' : '设置预算'}
+                  </button>
+                  {budget?.amount && budget.amount > 0 && (
+                    <div className="mt-2">
+                      <div className="text-[11px] opacity-70">
+                        预算 ¥{budget.amount.toFixed(0)}
+                      </div>
+                      <div className="w-24 h-1.5 bg-white/20 rounded-full mt-1 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            overBudget ? 'bg-white' : 'bg-white/70'
+                          }`}
+                          style={{ width: `${Math.min(budgetPct, 100)}%` }}
+                        />
+                      </div>
+                      <div className={`text-[11px] mt-0.5 ${overBudget ? 'font-bold' : 'opacity-70'}`}>
+                        {overBudget
+                          ? `超支 ¥${(expenseTotal - budget.amount).toFixed(2)}`
+                          : `剩余 ¥${(budget.amount - expenseTotal).toFixed(2)}`
+                        }
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
+
+          {/* 超支提醒横幅 */}
+          {overBudget && (
+            <div className="px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl flex items-center gap-2">
+              <span className="text-lg">⚠️</span>
+              <span className="text-sm text-red-600 font-medium">
+                {isThisMonth ? '本月' : '当月'}已超出预算 ¥{(expenseTotal - (budget?.amount || 0)).toFixed(2)}，请注意控制支出
+              </span>
+            </div>
+          )}
+
+          {/* 接近预算提醒横幅 */}
+          {nearBudget && (
+            <div className="px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2">
+              <span className="text-lg">💡</span>
+              <span className="text-sm text-amber-600 font-medium">
+                {isThisMonth ? '本月' : '当月'}预算已使用 {budgetPct.toFixed(0)}%，剩余 ¥{((budget?.amount || 0) - expenseTotal).toFixed(2)}
+              </span>
+            </div>
+          )}
+
+          {/* 记录列表 */}
+          {loading ? (
+            <div className="text-center py-16 text-slate-400 text-sm">加载中...</div>
+          ) : (
+            <ExpenseList
+              expenses={expenses}
+              onDelete={handleDelete}
+              onUpdate={handleUpdate}
+              onRefresh={loadData}
+              extraDates={addedDates}
+              onDeleteDate={handleDeleteDate}
+              onDeleteCategory={handleDeleteCategory}
+            />
+          )}
         </div>
 
-        <div className="flex items-end justify-between">
-          <div>
-            <div className="text-sm opacity-80 mb-1">{isThisMonth ? '本月支出' : '当月支出'}</div>
-            <div className="text-3xl font-bold tabular-nums">
-              ¥{expenseTotal.toFixed(2)}
-            </div>
-            {incomeTotal > 0 && (
-              <div className="text-sm opacity-70 mt-1">
-                💰 收入 ¥{incomeTotal.toFixed(2)}
-              </div>
-            )}
-            <div className="text-sm opacity-60 mt-1">
-              共 {monthCount} 笔记录
-            </div>
-          </div>
-
-          {/* 预算区域 */}
-          <div className="text-right">
-            <button
-              onClick={() => setShowBudget(true)}
-              className="text-xs bg-white/20 hover:bg-white/30 rounded-lg px-2.5 py-1 transition-colors"
-            >
-              {budget?.amount ? '修改预算' : '设置预算'}
-            </button>
-            {budget?.amount && budget.amount > 0 && (
-              <div className="mt-2">
-                <div className="text-[11px] opacity-70">
-                  预算 ¥{budget.amount.toFixed(0)}
-                </div>
-                {/* 预算进度条 */}
-                <div className="w-24 h-1.5 bg-white/20 rounded-full mt-1 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-300 ${
-                      overBudget ? 'bg-white' : 'bg-white/70'
-                    }`}
-                    style={{ width: `${Math.min(budgetPct, 100)}%` }}
-                  />
-                </div>
-                <div className={`text-[11px] mt-0.5 ${overBudget ? 'font-bold' : 'opacity-70'}`}>
-                  {overBudget
-                    ? `超支 ¥${(expenseTotal - budget.amount).toFixed(2)}`
-                    : `剩余 ¥${(budget.amount - expenseTotal).toFixed(2)}`
-                  }
-                </div>
-              </div>
-            )}
-          </div>
+        {/* ===== 右栏：当月支出图 + 分类排行 ===== */}
+        <div className="space-y-6">
+          <StatsPanel
+            startDate={range.start}
+            endDate={range.end}
+            title={rangeMode === 'week' ? '近7天支出' : rangeMode === '30d' ? '近30天支出' : '当月支出'}
+          />
         </div>
       </div>
 
-      {/* 超支提醒横幅 */}
-      {overBudget && (
-        <div className="mb-4 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl flex items-center gap-2">
-          <span className="text-lg">⚠️</span>
-          <span className="text-sm text-red-600 font-medium">
-            {isThisMonth ? '本月' : '当月'}已超出预算 ¥{(expenseTotal - (budget?.amount || 0)).toFixed(2)}，请注意控制支出
-          </span>
-        </div>
-      )}
-
-      {/* 接近预算提醒横幅 */}
-      {nearBudget && (
-        <div className="mb-4 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2">
-          <span className="text-lg">💡</span>
-          <span className="text-sm text-amber-600 font-medium">
-            {isThisMonth ? '本月' : '当月'}预算已使用 {budgetPct.toFixed(0)}%，剩余 ¥{((budget?.amount || 0) - expenseTotal).toFixed(2)}
-          </span>
-        </div>
-      )}
-
-      {/* 记录列表 */}
-      {loading ? (
-        <div className="text-center py-16 text-slate-400 text-sm">加载中...</div>
-      ) : (
-        <ExpenseList
-          expenses={expenses}
-          onDelete={handleDelete}
-          onUpdate={handleUpdate}
-          onRefresh={loadData}
-          extraDates={addedDates}
-          onDeleteDate={handleDeleteDate}
-          onDeleteCategory={handleDeleteCategory}
-        />
-      )}
-
-      {/* 添加日期按钮 — 改为日期选择 */}
+      {/* 添加日期按钮 */}
       <button
         onClick={() => { setAddingDate(localDateString()); setShowDateAdder(true) }}
         className="fixed bottom-8 right-8 w-14 h-14 bg-primary text-white rounded-full shadow-lg shadow-primary/30 hover:bg-primary-dark hover:shadow-xl hover:scale-105 active:scale-95 transition-all flex items-center justify-center z-20"
@@ -405,7 +516,7 @@ export default function HomePage() {
       {/* 预算设置弹窗 */}
       {showBudget && (
         <BudgetSetup
-          month={displayMonth}
+          month={budgetMonth}
           onClose={() => setShowBudget(false)}
           onSaved={() => { setShowBudget(false); refreshBudget() }}
         />

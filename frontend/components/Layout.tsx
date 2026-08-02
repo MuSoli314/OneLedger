@@ -5,7 +5,7 @@ export default function Layout() {
     <div className="flex flex-col min-h-screen">
       {/* 顶部导航 */}
       <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-lg border-b border-slate-100">
-        <div className="max-w-2xl mx-auto px-4 h-16 flex items-center justify-between">
+        <div className="max-w-[1280px] mx-auto px-4 h-16 flex items-center justify-between">
           <h1 className="text-lg font-bold text-slate-800 tracking-tight">
             📒 一笔
           </h1>
@@ -40,7 +40,7 @@ export default function Layout() {
       </header>
 
       {/* 页面内容 */}
-      <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-6 pb-24">
+      <main className="flex-1 max-w-[1280px] mx-auto w-full px-6 py-6 pb-24">
         <Outlet />
       </main>
     </div>
