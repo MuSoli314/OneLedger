@@ -317,10 +317,6 @@ function SortableSubCategoryRow({
         <span className="text-base font-medium text-slate-700 w-[110px] flex-shrink-0 truncate">{sub.name}</span>
       )}
 
-      {sub.isDefault && !isEditing && (
-        <span className="text-[10px] text-primary/70 bg-primary/5 px-1.5 py-0.5 rounded-full flex-shrink-0">默认</span>
-      )}
-
       {/* 编辑区 */}
       <div className="flex-1 min-w-0">
         {isEditing ? (
@@ -664,7 +660,6 @@ export default function CategoryManager() {
           return (
             <div className="bg-white rounded-lg border border-primary/30 shadow-lg px-4 py-2 flex items-center gap-2">
               <span className="text-sm text-slate-700">{sub.name}</span>
-              {sub.isDefault && <span className="text-[10px] text-primary/70 bg-primary/5 px-1.5 py-0.5 rounded-full">默认</span>}
             </div>
           )
         }
