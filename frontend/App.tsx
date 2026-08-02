@@ -1,7 +1,6 @@
 import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import HomePage from './pages/HomePage'
-import StatsPage from './pages/StatsPage'
 import CategoryManager from './pages/CategoryManager'
 
 export default function App() {
@@ -9,7 +8,6 @@ export default function App() {
     <Routes>
       <Route element={<Layout />}>
         <Route path="/" element={<HomePage />} />
-        <Route path="/stats" element={<StatsPage />} />
         <Route path="/categories" element={<CategoryManager />} />
       </Route>
     </Routes>
