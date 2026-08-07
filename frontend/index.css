@@ -33,3 +33,69 @@ select {
   display: flex;
   flex-direction: column;
 }
+
+/* ===== react-day-picker 自定义主题（v10，通过 CSS 变量统一外观） ===== */
+
+/* 用双类选择器提高优先级：库自己的 .rdp-root 变量样式在构建后排在后面，
+   单类选择器会被它盖掉（同优先级后出现者胜）。双类能稳压住。 */
+.rdp-root.rdp-root {
+  --rdp-accent-color: #6366f1; /* 主色（选中两端、今天、导航箭头） */
+  --rdp-accent-background-color: #eef2ff; /* 区间中段底色 */
+
+  /* 格子尺寸：单元格 + 按钮都缩到 35px，去掉按钮默认 2px 描边避免视觉超宽 */
+  --rdp-day-width: 2.1875rem;
+  --rdp-day-height: 2.1875rem;
+  --rdp-day_button-width: 2.1875rem;
+  --rdp-day_button-height: 2.1875rem;
+  --rdp-day_button-border: none;
+
+  --rdp-months-gap: 0.5rem; /* 两个月之间的间距 */
+  --rdp-today-color: #6366f1;
+  --rdp-disabled-opacity: 0.35;
+  --rdp-outside-opacity: 0.35;
+
+  --rdp-nav_button-height: 1.75rem;
+  --rdp-nav_button-width: 1.75rem;
+}
+
+/* 两个月强制横排（并排），放不下时由外层 overflow-x-auto 出横向滚动，而不是竖排 */
+.rdp-root .rdp-months {
+  flex-wrap: nowrap;
+}
+
+/* 日期格子：保持原字号、圆角 */
+.rdp-root .rdp-day_button {
+  font-size: 0.875rem;
+  border-radius: 0.5rem;
+}
+
+/* 区间两端：实心主色、白字（替代库默认的渐变） */
+.rdp-root .rdp-range_start .rdp-day_button,
+.rdp-root .rdp-range_end .rdp-day_button {
+  background-color: #6366f1;
+  border-radius: 0.5rem;
+  color: #fff;
+}
+
+/* 区间中段：浅主色底，保持两端实心不被渐变覆盖 */
+.rdp-root .rdp-range_middle .rdp-day_button {
+  background-color: #eef2ff;
+  border-radius: 0.5rem;
+  color: #1e293b;
+}
+
+/* 今天：加粗主色 */
+.rdp-root .rdp-today {
+  font-weight: 700;
+}
+
+/* 月份/年份下拉：与应用控件一致的圆角 + 描边 */
+.rdp-root .rdp-dropdown_root select {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 0.875rem;
+  padding: 2px 8px;
+}
+

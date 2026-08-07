@@ -31,3 +31,6 @@ Cargo.lock
 # Claude Code 工作文件（项目记忆 + 工作文档，不提交）
 .claude/memory/
 .claude/docs/
+
+# 可视化讨论草图
+.superpowers/

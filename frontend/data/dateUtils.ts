@@ -45,8 +45,12 @@ export function eachDay(start: string, end: string): string[] {
   return result
 }
 
-/** 计算时间范围的本地起止日期（近一周 / 近一月 / 本月 / 历史月份） */
-export function getRangeDates(mode: RangeMode, historyMonth?: string): { start: string; end: string } {
+/** 计算时间范围的本地起止日期（近一周 / 近一月 / 本月 / 上月 / 历史月份 / 自定义） */
+export function getRangeDates(
+  mode: RangeMode,
+  historyMonth?: string,
+  customRange?: { start: string; end: string }
+): { start: string; end: string } {
   const now = new Date()
   if (mode === 'week') {
     // 近一周 = 今天往前推 6 天 → 今天（共 7 天）
@@ -59,6 +63,17 @@ export function getRangeDates(mode: RangeMode, historyMonth?: string): { start: 
   if (mode === 'month') {
     // 本月 = 自然月 1 号 → 今天
     return { start: localDateString(new Date(now.getFullYear(), now.getMonth(), 1)), end: localDateString(now) }
+  }
+  if (mode === 'lastMonth') {
+    // 上月 = 上月 1 号 → 上月最后一天
+    const firstDay = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    const lastDay = new Date(now.getFullYear(), now.getMonth(), 0)
+    return { start: localDateString(firstDay), end: localDateString(lastDay) }
+  }
+  if (mode === 'custom') {
+    // 自定义日期段
+    if (customRange) return customRange
+    return { start: localDateString(now), end: localDateString(now) }
   }
   // history：所选自然月的 1 号 → 最后一天
   const hm = historyMonth || localMonthString()

@@ -3,6 +3,8 @@ import ExpenseList from '../components/ExpenseList'
 import ExpenseForm from '../components/ExpenseForm'
 import BudgetSetup from '../components/BudgetSetup'
 import ConfirmDialog from '../components/ConfirmDialog'
+import DatePicker from '../components/DatePicker'
+import DateRangePicker from '../components/DateRangePicker'
 import StatsPanel from '../components/StatsPanel'
 import { TrendLineChart } from '../components/TrendChart'
 import {
@@ -35,20 +37,23 @@ function fillTrendGaps(data: TrendPoint[], months: number): TrendPoint[] {
   return result
 }
 
-// 时间范围选择器里的三个固定按钮（历史月份是单独的下拉框）
+// 时间范围选择器里的固定按钮（历史月份和自定义是单独控件）
 const RANGE_PILLS: { key: RangeMode; label: string }[] = [
   { key: 'week', label: '近一周' },
   { key: '30d', label: '近一月' },
   { key: 'month', label: '本月' },
+  { key: 'lastMonth', label: '上月' },
 ]
 
 export default function HomePage() {
   const { categories } = useCategories()
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [showForm, setShowForm] = useState(false)
-  // 时间范围：近一周 / 近一月 / 本月（默认）/ 历史月份
+  // 时间范围：近一周 / 近一月 / 本月（默认）/ 上月 / 历史月份 / 自定义
   const [rangeMode, setRangeMode] = useState<RangeMode>('month')
   const [historyMonth, setHistoryMonth] = useState('') // 仅 rangeMode='history' 时有效
+  const [customRange, setCustomRange] = useState<{ start: string; end: string }>({ start: localDateString(), end: localDateString() })
+  const [showCustomPicker, setShowCustomPicker] = useState(false)
   const [months, setMonths] = useState<string[]>([])
   const [trendData, setTrendData] = useState<TrendPoint[]>([])
   const [trendCategory, setTrendCategory] = useState('') // '' 表示「全天」（所有大类按月汇总）
@@ -65,11 +70,11 @@ export default function HomePage() {
   const thisMonth = localMonthString()
 
   // 当前时间范围的本地起止日期
-  const range = useMemo(() => getRangeDates(rangeMode, historyMonth), [rangeMode, historyMonth])
+  const range = useMemo(() => getRangeDates(rangeMode, historyMonth, customRange), [rangeMode, historyMonth, customRange])
 
-  // 预算只在「本月 / 历史月份」显示；归属月份跟随所选月份
-  const showBudgetPanel = rangeMode === 'month' || rangeMode === 'history'
-  const budgetMonth = rangeMode === 'history' ? historyMonth : thisMonth
+  // 预算在「本月 / 上月 / 历史月份」显示；自定义若起止同月也显示该月预算
+  const showBudgetPanel = rangeMode === 'month' || rangeMode === 'lastMonth' || rangeMode === 'history' || (rangeMode === 'custom' && customRange.start.slice(0, 7) === customRange.end.slice(0, 7))
+  const budgetMonth = rangeMode === 'history' ? historyMonth : rangeMode === 'lastMonth' ? localMonthString(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1)) : rangeMode === 'custom' ? customRange.start.slice(0, 7) : thisMonth
   const isThisMonth = rangeMode === 'month'
 
   // 卡片左上角标签 + 金额标签
@@ -77,10 +82,14 @@ export default function HomePage() {
     rangeMode === 'week' ? '近一周'
       : rangeMode === '30d' ? '近一月'
       : rangeMode === 'month' ? '本月'
+      : rangeMode === 'lastMonth' ? '上月'
+      : rangeMode === 'custom' ? `${customRange.start} 至 ${customRange.end}`
       : formatMonth(historyMonth)
   const amountLabel =
     rangeMode === 'week' ? '近一周支出'
       : rangeMode === '30d' ? '近一月支出'
+      : rangeMode === 'lastMonth' ? '上月支出'
+      : rangeMode === 'custom' ? '自定义支出'
       : isThisMonth ? '本月支出' : '当月支出'
 
   // 加载列表（按时间范围筛选）+ 历史月份下拉数据
@@ -304,7 +313,7 @@ export default function HomePage() {
             </div>
 
             {/* 时间范围选择器 */}
-            <div className="flex items-center gap-1.5 mb-4 flex-wrap">
+            <div className="flex items-center gap-1.5 mb-2 flex-wrap">
               {RANGE_PILLS.map((p) => (
                 <button
                   key={p.key}
@@ -338,7 +347,29 @@ export default function HomePage() {
                   </option>
                 ))}
               </select>
+              <button
+                onClick={() => { setRangeMode('custom'); setShowCustomPicker(true) }}
+                className={`text-xs rounded-lg px-2.5 py-1 transition-colors ${
+                  rangeMode === 'custom'
+                    ? 'bg-white/30 font-semibold'
+                    : 'bg-white/10 hover:bg-white/20'
+                }`}
+              >
+                自定义
+              </button>
             </div>
+
+            {rangeMode === 'custom' && showCustomPicker && (
+              <div className="bg-white rounded-xl p-4 mb-4 text-slate-900 w-fit max-w-full overflow-x-auto">
+                <DateRangePicker
+                  start={customRange.start}
+                  end={customRange.end}
+                  onChange={(range) => setCustomRange(range)}
+                  onComplete={() => setShowCustomPicker(false)}
+                  onCancel={() => setShowCustomPicker(false)}
+                />
+              </div>
+            )}
 
             {/* 金额区域 */}
             <div className="flex items-end justify-between">
@@ -433,7 +464,7 @@ export default function HomePage() {
           <StatsPanel
             startDate={range.start}
             endDate={range.end}
-            title={rangeMode === 'week' ? '近7天支出' : rangeMode === '30d' ? '近30天支出' : '当月支出'}
+            title={rangeLabel}
           />
         </div>
       </div>
@@ -454,13 +485,7 @@ export default function HomePage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6">
             <h2 className="text-lg font-semibold text-slate-900 mb-5">添加日期</h2>
-            <input
-              type="date"
-              value={addingDate}
-              onChange={(e) => setAddingDate(e.target.value)}
-              className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-lg text-sm text-slate-900 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/10 mb-4"
-              autoFocus
-            />
+            <DatePicker value={addingDate} onChange={setAddingDate} inline />
             {addingDate && existingDates.has(addingDate) && (
               <div className="mb-4 px-3 py-2 bg-amber-50 border border-amber-200 text-amber-600 rounded-lg text-sm">
                 该日期已有记录，请选择没有记录的日期

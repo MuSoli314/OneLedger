@@ -1,8 +1,8 @@
 // 类型定义
 export type TransactionType = 'expense' | 'income' | 'ignore'
 
-// 时间范围模式：近一周 / 近一月 / 本月 / 历史月份
-export type RangeMode = 'week' | '30d' | 'month' | 'history'
+// 时间范围模式：近一周 / 近一月 / 本月 / 上月 / 历史月份 / 自定义
+export type RangeMode = 'week' | '30d' | 'month' | 'lastMonth' | 'history' | 'custom'
 
 export interface Expense {
   id: number

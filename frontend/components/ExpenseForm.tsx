@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import CategoryPicker from './CategoryPicker'
+import DatePicker from './DatePicker'
 import { addExpense, updateExpense } from '../data/database'
 import { PAYMENT_METHODS, TRANSACTION_TYPES } from '../data/categories'
 import { localDateString } from '../data/dateUtils'
@@ -150,12 +151,7 @@ export default function ExpenseForm({ editExpense, defaultDate, onSuccess, onCan
         {/* 日期 */}
         <div className="mb-4">
           <label className="block text-sm text-slate-500 mb-1.5">日期</label>
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-lg text-base text-slate-900 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/10"
-          />
+          <DatePicker value={date} onChange={setDate} />
         </div>
 
         {/* 支付方式 */}
