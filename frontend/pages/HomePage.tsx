@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import ExpenseList from '../components/ExpenseList'
 import ExpenseForm from '../components/ExpenseForm'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -19,6 +19,7 @@ import {
   expensesToCSV,
   addExpense,
   getTrendData,
+  catKey,
 } from '../data/database'
 import { localDateString, localMonthString, formatMonth, getRangeDates, addDays } from '../data/dateUtils'
 import { format } from 'date-fns'
@@ -50,6 +51,9 @@ const RANGE_PILLS: { key: RangeMode; label: string }[] = [
 export default function HomePage() {
   const { categories } = useCategories()
   const [expenses, setExpenses] = useState<Expense[]>([])
+  // 数据版本号：每次 loadData() 完成后自增。右栏统计面板 / 顶部趋势图用它做刷新信号，
+  // 否则编辑/删除/新增后只有蓝色卡片（直接由 expenses 推导）会变，图表不重新查库。
+  const [dataVersion, setDataVersion] = useState(0)
   const [showForm, setShowForm] = useState(false)
   // 时间范围：近一周 / 近一月 / 本月（默认）/ 上月 / 历史月份 / 自定义
   const [rangeMode, setRangeMode] = useState<RangeMode>('month')
@@ -65,9 +69,13 @@ export default function HomePage() {
   const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null)
   const [deleteDateTarget, setDeleteDateTarget] = useState<string | null>(null)
   const [deleteCategoryTarget, setDeleteCategoryTarget] = useState<{ date: string; category_l1: string } | null>(null)
+  const budgetInputRef = useRef<HTMLInputElement>(null)
   const [showDateAdder, setShowDateAdder] = useState(false)
   const [addingDate, setAddingDate] = useState('')
   const [addedDates, setAddedDates] = useState<string[]>([])
+  const [paymentFilter, setPaymentFilter] = useState('') // 按支付方式筛选列表，'' 表示不筛选
+  // 按分类筛选：Set 里存的是「大类+小类」组合键（catKey）。选了某大类 = 它所有小类都选中
+  const [selectedCats, setSelectedCats] = useState<Set<string>>(new Set())
 
   const thisMonth = localMonthString()
 
@@ -84,7 +92,7 @@ export default function HomePage() {
       : rangeMode === '30d' ? '近一月'
       : rangeMode === 'month' ? '本月'
       : rangeMode === 'lastMonth' ? '上月'
-      : rangeMode === 'custom' ? `${customRange.start} 至 ${customRange.end}`
+      : rangeMode === 'custom' ? `${customRange.start.replace(/-/g, '/')} 至 ${customRange.end.replace(/-/g, '/')}`
       : formatMonth(historyMonth)
 
   // 加载列表（按时间范围筛选）+ 历史月份下拉数据
@@ -96,6 +104,8 @@ export default function HomePage() {
       ])
       setExpenses(data)
       setMonths(m)
+      // 数据已刷新：自增版本号，通知统计面板 / 趋势图重新查库
+      setDataVersion((v) => v + 1)
     } catch (err) {
       console.error('加载数据失败:', err)
     } finally {
@@ -103,10 +113,11 @@ export default function HomePage() {
     }
   }, [range])
 
-  // 顶部趋势图固定近 12 个月，不随时间范围切换；可按大类筛选（随 trendCategory 变化）
+  // 顶部趋势图固定近 12 个月，不随时间范围切换；可按大类筛选（随 trendCategory 变化）。
+  // dataVersion 变化时重新查库，保证编辑/删除后图表同步刷新
   useEffect(() => {
     getTrendData(12, trendCategory || undefined).then(setTrendData).catch(console.error)
-  }, [trendCategory])
+  }, [trendCategory, dataVersion])
 
   // 预算（近一周/近一月不显示预算，置空）
   const refreshBudget = useCallback(() => {
@@ -286,6 +297,53 @@ export default function HomePage() {
 
   const recordCount = expenses.length
 
+  // 是否正在按分类筛选
+  const hasCategoryFilter = selectedCats.size > 0
+
+  // 勾选某大类：等于选中它下面的所有小类；再次点击（小类全部已选时）整类取消
+  const toggleCategory = useCallback((l1: string, l2s: string[]) => {
+    setSelectedCats((prev) => {
+      const next = new Set(prev)
+      if (l2s.every((l2) => next.has(catKey(l1, l2)))) {
+        for (const l2 of l2s) next.delete(catKey(l1, l2))
+      } else {
+        for (const l2 of l2s) next.add(catKey(l1, l2))
+      }
+      return next
+    })
+  }, [])
+
+  // 勾选某小类：单独选中/取消
+  const toggleSubCategory = useCallback((l1: string, l2: string) => {
+    setSelectedCats((prev) => {
+      const next = new Set(prev)
+      const k = catKey(l1, l2)
+      if (next.has(k)) next.delete(k)
+      else next.add(k)
+      return next
+    })
+  }, [])
+
+  // 判断某小类是否被选中（用于复选框勾选态 + 列表筛选）
+  const isCatSelected = useCallback(
+    (l1: string, l2: string) => selectedCats.has(catKey(l1, l2)),
+    [selectedCats]
+  )
+
+  // 清理全部筛选（支付方式 + 分类）
+  const clearFilters = () => {
+    setPaymentFilter('')
+    setSelectedCats(new Set())
+  }
+
+  // 分类筛选后的列表（勾选的每个小类都保留；大小类筛选与支付方式筛选叠加生效）
+  const filteredExpenses = useMemo(() => {
+    let list = expenses
+    if (paymentFilter) list = list.filter((e) => (e.payment_method || '未设置') === paymentFilter)
+    if (selectedCats.size > 0) list = list.filter((e) => selectedCats.has(catKey(e.category_l1, e.category_l2)))
+    return list
+  }, [expenses, paymentFilter, selectedCats])
+
   // 支付方式统计（只统计支出，与卡片总支出 ¥expenseTotal 口径一致；金额按从高到低排序）
   const paymentTotals = useMemo(() => {
     const map = new Map<string, number>()
@@ -312,9 +370,10 @@ export default function HomePage() {
     setBudgetDraft(budget?.amount ? budget.amount.toFixed(0) : '')
   }, [budget])
 
-  // 内联文本框保存预算（回车或失焦触发）
-  const commitBudget = async () => {
-    const num = parseFloat(budgetDraft)
+  // 内联文本框保存预算（回车、失焦、或点上下箭头时触发）
+  const commitBudget = async (raw?: string) => {
+    const draft = raw ?? budgetDraft
+    const num = parseFloat(draft)
     if (isNaN(num) || num < 0) {
       // 非法输入，还原为当前预算值
       setBudgetDraft(budget?.amount ? budget.amount.toFixed(0) : '')
@@ -332,6 +391,21 @@ export default function HomePage() {
       alert('预算保存失败：' + String(err))
     }
   }
+
+  // 原生 number 输入框：点上下箭头（鼠标松开时）会触发原生 change 事件，
+  // 此时立即保存，无需再按回车/失焦；打字仍走回车/失焦保存。用 ref 保证
+  // 监听器只绑定一次，内部始终调用最新的 commitBudget。
+  const commitBudgetRef = useRef(commitBudget)
+  commitBudgetRef.current = commitBudget
+  useEffect(() => {
+    const el = budgetInputRef.current
+    if (!el) return
+    const handleNativeChange = (e: Event) => {
+      commitBudgetRef.current((e.target as HTMLInputElement).value)
+    }
+    el.addEventListener('change', handleNativeChange)
+    return () => el.removeEventListener('change', handleNativeChange)
+  }, [])
 
   // 导出（导出全部记录，与时间范围无关）
   const handleExport = async () => {
@@ -439,7 +513,7 @@ export default function HomePage() {
                   }`}
                 >
                   {rangeMode === 'custom'
-                    ? `${customRange.start} 至 ${customRange.end}`
+                    ? `${customRange.start.replace(/-/g, '/')} 至 ${customRange.end.replace(/-/g, '/')}`
                     : '自定义'}
                 </button>
                 <button
@@ -478,18 +552,30 @@ export default function HomePage() {
                   <span className="font-semibold tabular-nums">{recordCount}</span>
                 </div>
 
-                {/* 预算：占 1/4（输入框，↑↓ 箭头 ±1000） */}
+                {/* 预算：占 1/4（原生上下箭头 ±1000，点箭头松手即保存，无需回车） */}
                 {showBudgetPanel && (
                   <div className="w-1/4 shrink-0 flex items-center gap-1 whitespace-nowrap">
                     <span className="opacity-80">预算：</span>
                     <input
+                      ref={budgetInputRef}
                       type="number"
                       min="0"
                       step={1000}
                       value={budgetDraft}
                       onChange={(e) => setBudgetDraft(e.target.value)}
-                      onBlur={commitBudget}
-                      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                      onBlur={(e) => commitBudget(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') e.currentTarget.blur()
+                        // 键盘上下方向键：±1000 步进，松手/回车后保存
+                        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                          e.preventDefault()
+                          const cur = parseFloat(budgetDraft)
+                          const base = isNaN(cur) || cur < 0 ? 0 : cur
+                          const next = e.key === 'ArrowUp' ? base + 1000 : Math.max(0, base - 1000)
+                          setBudgetDraft(String(next))
+                          commitBudget(String(next))
+                        }
+                      }}
                       placeholder="未设置"
                       className="w-16 bg-white/20 rounded-md px-1 py-0.5 font-semibold tabular-nums placeholder-white/50 focus:bg-white/30 focus:outline-none"
                     />
@@ -526,23 +612,31 @@ export default function HomePage() {
               )}
             </div>
 
-            {/* 支付方式统计（无标题；每个支付方式占 1/3，格式：icon 名称 ¥金额 占比%） */}
+            {/* 支付方式统计（无标题；每个支付方式占 1/3，格式：icon 名称 ¥金额 占比%；点击筛选下方列表，再点取消） */}
             {paymentTotals.length > 0 && (
               <div className="mt-4 pt-3 border-t border-white/20">
                 <div className="grid grid-cols-3 gap-1.5">
                   {paymentTotals.map(({ name, total }) => {
                     const icon = PAYMENT_METHODS.find((p) => p.name === name)?.icon || '💳'
                     const pct = expenseTotal > 0 ? (total / expenseTotal) * 100 : 0
+                    const active = paymentFilter === name
                     return (
-                      <div
+                      <button
                         key={name}
-                        className="flex items-center justify-between gap-1 bg-white/10 rounded-lg px-2 py-1.5 text-xs whitespace-nowrap overflow-hidden"
-                        title={`${name}：¥${total.toFixed(2)}（${pct.toFixed(1)}%）`}
+                        onClick={() => setPaymentFilter(active ? '' : name)}
+                        className={`flex items-center justify-between gap-1 rounded-lg px-2 py-1.5 text-xs whitespace-nowrap overflow-hidden transition-colors ${
+                          active
+                            ? 'bg-white text-primary font-semibold'
+                            : paymentFilter
+                            ? 'bg-white/10 hover:bg-white/25 opacity-50'
+                            : 'bg-white/10 hover:bg-white/20'
+                        }`}
+                        title={`${name}：¥${total.toFixed(2)}（${pct.toFixed(1)}%）${active ? '，点击取消筛选' : '，点击筛选'}`}
                       >
-                        <span className="text-white/90">{icon} {name}</span>
+                        <span className={active ? '' : 'text-white/90'}>{icon} {name}</span>
                         <span className="font-semibold tabular-nums">¥{total.toFixed(2)}</span>
-                        <span className="text-white/50 tabular-nums">{pct.toFixed(1)}%</span>
-                      </div>
+                        <span className={active ? 'text-primary/60' : 'text-white/50'}>{pct.toFixed(1)}%</span>
+                      </button>
                     )
                   })}
                 </div>
@@ -555,8 +649,8 @@ export default function HomePage() {
             <div className="text-center py-16 text-slate-400 text-sm">加载中...</div>
           ) : (
             <div className="space-y-4">
-              {/* 快捷添加「下一天」按钮（仅本月，且最大日期未到月末时才显示） */}
-              {nextQuickDate && (
+              {/* 快捷添加「下一天」按钮（仅本月、未筛选支付方式、未筛选分类、且最大日期未到月末时才显示） */}
+              {!paymentFilter && !hasCategoryFilter && nextQuickDate && (
                 <button
                   onClick={handleQuickAdd}
                   disabled={quickAdding}
@@ -570,19 +664,20 @@ export default function HomePage() {
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                       </svg>
-                      <span>添加 {format(nextQuickDate, 'MM/dd')}（下一天）</span>
+                      <span>添加 {format(nextQuickDate, 'yyyy/MM/dd')}（下一天）</span>
                     </>
                   )}
                 </button>
               )}
               <ExpenseList
-                expenses={expenses}
+                expenses={filteredExpenses}
                 onDelete={handleDelete}
                 onUpdate={handleUpdate}
                 onRefresh={loadData}
                 extraDates={addedDates}
                 onDeleteDate={handleDeleteDate}
                 onDeleteCategory={handleDeleteCategory}
+                hasFilter={!!paymentFilter || hasCategoryFilter}
               />
             </div>
           )}
@@ -593,7 +688,14 @@ export default function HomePage() {
           <StatsPanel
             startDate={range.start}
             endDate={range.end}
+            dataVersion={dataVersion}
             title={rangeLabel}
+            selectedCats={selectedCats}
+            isCatSelected={isCatSelected}
+            onToggleCategory={toggleCategory}
+            onToggleSubCategory={toggleSubCategory}
+            onClearFilters={clearFilters}
+            paymentFilter={paymentFilter}
           />
         </div>
       </div>

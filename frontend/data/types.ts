@@ -29,7 +29,12 @@ export interface ExpenseInput {
 export interface MonthlyStats {
   total: number
   count: number
-  byCategory: { category_l1: string; total: number; count: number }[]
+  byCategory: {
+    category_l1: string
+    total: number
+    count: number
+    children: { category_l2: string; total: number; count: number }[]
+  }[]
 }
 
 export interface Budget {

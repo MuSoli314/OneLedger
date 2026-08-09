@@ -2,6 +2,11 @@ import Database from '@tauri-apps/plugin-sql'
 import type { Expense, ExpenseInput, Budget, TrendPoint, CategoryWithChildren, TransactionType, DailyTrendPoint, MonthlyStats } from './types'
 import { categories as defaultCategories } from './categories'
 
+// 分类筛选的组合键分隔符（小类名在不同大类下可能重名，故用「大类+小类」作唯一键）
+// HomePage / StatsPanel / database 共用此函数，保证键格式一致
+export const CAT_KEY_SEP = '§'
+export const catKey = (l1: string, l2: string) => `${l1}${CAT_KEY_SEP}${l2}`
+
 let db: Database | null = null
 let dbInit: Promise<Database> | null = null
 
@@ -198,19 +203,35 @@ export async function getDailyTotals(startDate: string, endDate: string, categor
   return database.select<DailyTrendPoint[]>(sql, values)
 }
 
-// 按日期范围的分类排行（替代 getMonthlyStats 的月份版本）
+// 按日期范围的分类排行（替代 getMonthlyStats 的月份版本）。
+// 每个大类附带 children（小类聚合），供分类排行展开查看小类金额。
+// 排行始终统计完整范围内的数据（作为勾选筛选的入口，勾选后只筛选记录列表）。
 export async function getStatsByRange(startDate: string, endDate: string): Promise<MonthlyStats> {
   const database = await getDb()
   const summary = await database.select<{ total: number; count: number }[]>(
     "SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as count FROM expenses WHERE date >= $1 AND date <= $2 AND type='expense'",
     [startDate, endDate]
   )
-  const byCategory = await database.select<
-    { category_l1: string; total: number; count: number }[]
-  >(
+  const byCategory = await database.select<MonthlyStats['byCategory']>(
     "SELECT category_l1, SUM(amount) as total, COUNT(*) as count FROM expenses WHERE date >= $1 AND date <= $2 AND type='expense' GROUP BY category_l1 ORDER BY total DESC",
     [startDate, endDate]
   )
+  // 小类聚合：按大类+小类分组，同一大类下按金额从高到低排序
+  const byL2 = await database.select<
+    { category_l1: string; category_l2: string; total: number; count: number }[]
+  >(
+    "SELECT category_l1, category_l2, SUM(amount) as total, COUNT(*) as count FROM expenses WHERE date >= $1 AND date <= $2 AND type='expense' GROUP BY category_l1, category_l2 ORDER BY category_l1 ASC, total DESC",
+    [startDate, endDate]
+  )
+  const childrenByL1 = new Map<string, MonthlyStats['byCategory'][number]['children']>()
+  for (const row of byL2) {
+    const list = childrenByL1.get(row.category_l1) ?? []
+    list.push({ category_l2: row.category_l2, total: row.total, count: row.count })
+    childrenByL1.set(row.category_l1, list)
+  }
+  for (const item of byCategory) {
+    item.children = childrenByL1.get(item.category_l1) ?? []
+  }
   return {
     total: summary[0]?.total ?? 0,
     count: summary[0]?.count ?? 0,

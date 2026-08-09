@@ -13,6 +13,8 @@ interface Props {
   extraDates?: string[]
   onDeleteDate?: (date: string) => void
   onDeleteCategory?: (date: string, category_l1: string) => void
+  // 是否正在筛选（支付方式/分类），仅影响空状态文案
+  hasFilter?: boolean
 }
 
 interface LocalRow {
@@ -28,7 +30,7 @@ interface LocalRow {
 
 function formatDate(dateStr: string): string {
   try {
-    return format(new Date(dateStr), 'MM/dd')
+    return format(new Date(dateStr), 'yyyy/MM/dd')
   } catch {
     return dateStr
   }
@@ -43,7 +45,7 @@ function getWeekday(dateStr: string): string {
   }
 }
 
-export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, extraDates, onDeleteDate, onDeleteCategory }: Props) {
+export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, extraDates, onDeleteDate, onDeleteCategory, hasFilter }: Props) {
   const { categories } = useCategories()
   const [collapsedMap, setCollapsedMap] = useState<Set<string>>(new Set())
   // 日期折叠 — 默认全部折叠（空 Set = 没有展开的日期）
@@ -314,9 +316,13 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
   if (expenses.length === 0 && localRows.length === 0 && (!extraDates || extraDates.length === 0)) {
     return (
       <div className="text-center py-20">
-        <div className="text-6xl mb-4">📝</div>
-        <p className="text-slate-400 text-base">还没有消费记录</p>
-        <p className="text-slate-300 text-sm mt-1">点击日期旁的 "+" 按钮记一笔吧</p>
+        <div className="text-6xl mb-4">{hasFilter ? '🔍' : '📝'}</div>
+        <p className="text-slate-400 text-base">
+          {hasFilter ? '当前筛选下没有记录' : '还没有消费记录'}
+        </p>
+        <p className="text-slate-300 text-sm mt-1">
+          {hasFilter ? '清除筛选后即可看到全部记录' : '点击日期旁的 "+" 按钮记一笔吧'}
+        </p>
       </div>
     )
   }
@@ -373,9 +379,9 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
             {/* 日期标题 + 每日小计 + 添加按钮 — 整行可点击展开/折叠 */}
             <div
               onClick={() => toggleDateCollapse(date)}
-              className="flex items-center justify-between mb-2 px-0.5 cursor-pointer hover:opacity-75 transition-opacity"
+              className="flex items-center justify-between mb-2 px-0.5 cursor-pointer"
             >
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 hover:opacity-75 transition-opacity">
                 <svg
                   className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${
                     expandedDates.has(date) ? '' : '-rotate-90'
@@ -405,15 +411,51 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                       .map(([pm, total]) => {
                         const pmInfo = PAYMENT_METHODS.find((p) => p.name === pm)
                         return (
-                          <span key={pm} className="inline-flex items-center gap-0.5 text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md">
+                          <span key={pm} className="relative group inline-flex items-center gap-0.5 text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md cursor-pointer">
                             <span>{pmInfo?.icon || ''}</span>
-                            <span className="font-medium">{pm}</span>
-                            <span className="tabular-nums">¥{total.toFixed(2)}</span>
+                            <span className="tabular-nums font-medium">¥{total.toFixed(2)}</span>
+                            {/* 悬浮气泡（CSS 自绘，WebView 也支持） */}
+                            <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 -translate-y-1 whitespace-nowrap rounded-md bg-slate-800 text-white text-xs px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity z-30 shadow-lg">
+                              {pm}
+                            </span>
                           </span>
                         )
                       })
                   })()}
                 </div>
+
+                {/* 支付方式统计（移动端） */}
+                <div className="sm:hidden flex items-center gap-1 flex-wrap">
+                  {(() => {
+                    const pmTotals: Record<string, number> = {}
+                    for (const e of items) {
+                      const pm = e.payment_method || ''
+                      if (pm && e.type !== 'ignore') pmTotals[pm] = (pmTotals[pm] || 0) + e.amount
+                    }
+                    return Object.entries(pmTotals)
+                      .filter(([, total]) => total > 0)
+                      .map(([pm, total]) => {
+                        const pmInfo = PAYMENT_METHODS.find((p) => p.name === pm)
+                        return (
+                          <span key={pm} className="relative group inline-flex items-center gap-0.5 text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md cursor-pointer">
+                            <span>{pmInfo?.icon || ''}</span>
+                            <span className="tabular-nums font-medium">¥{total.toFixed(2)}</span>
+                            {/* 悬浮气泡（CSS 自绘，WebView 也支持） */}
+                            <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 -translate-y-1 whitespace-nowrap rounded-md bg-slate-800 text-white text-xs px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity z-30 shadow-lg">
+                              {pm}
+                            </span>
+                          </span>
+                        )
+                      })
+                  })()}
+                </div>
+
+                <span className="text-sm text-slate-500">
+                  合计 <span className="font-medium text-slate-700">¥{dayTotal.toFixed(2)}</span>
+                  {!expandedDates.has(date) && items.length > 0 && (
+                    <span className="text-slate-300 ml-1">({items.length}笔)</span>
+                  )}
+                </span>
 
                 {/* 添加大类按钮 */}
                 <div className="relative" ref={addingDate === date ? addBtnRef : undefined}>
@@ -465,36 +507,6 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                     </svg>
                   </button>
                 )}
-
-                {/* 支付方式统计（移动端） */}
-                <div className="sm:hidden flex items-center gap-1 flex-wrap">
-                  {(() => {
-                    const pmTotals: Record<string, number> = {}
-                    for (const e of items) {
-                      const pm = e.payment_method || ''
-                      if (pm && e.type !== 'ignore') pmTotals[pm] = (pmTotals[pm] || 0) + e.amount
-                    }
-                    return Object.entries(pmTotals)
-                      .filter(([, total]) => total > 0)
-                      .map(([pm, total]) => {
-                        const pmInfo = PAYMENT_METHODS.find((p) => p.name === pm)
-                        return (
-                          <span key={pm} className="inline-flex items-center gap-0.5 text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md">
-                            <span>{pmInfo?.icon || ''}</span>
-                            <span className="font-medium">{pm}</span>
-                            <span className="tabular-nums">¥{total.toFixed(2)}</span>
-                          </span>
-                        )
-                      })
-                  })()}
-                </div>
-
-                <span className="text-sm text-slate-500">
-                  小计 <span className="font-medium text-slate-700">¥{dayTotal.toFixed(2)}</span>
-                  {!expandedDates.has(date) && items.length > 0 && (
-                    <span className="text-slate-300 ml-1">({items.length}笔)</span>
-                  )}
-                </span>
               </div>
             </div>
 

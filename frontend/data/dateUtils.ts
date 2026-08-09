@@ -20,10 +20,10 @@ export function daysInMonth(month: string): number {
   return new Date(y, m, 0).getDate()
 }
 
-/** 月份显示为 "2026年7月" */
+/** 月份显示为 "2026/07" */
 export function formatMonth(month: string): string {
   const [y, m] = month.split('-')
-  return `${y}年${Number(m)}月`
+  return `${y}/${m}`
 }
 
 /** 在本地日期上加减天数（返回新 Date，不修改入参） */

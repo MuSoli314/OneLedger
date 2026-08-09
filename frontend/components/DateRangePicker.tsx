@@ -81,7 +81,7 @@ export default function DateRangePicker({ start, end, onChange, onComplete, onCa
       <div className="flex items-center justify-between">
         {range?.from && !range.to ? (
           <span className="text-xs text-slate-500">
-            已选择开始日期 {format(range.from, 'MM月dd日')}，请点击结束日期
+            已选择开始日期 {format(range.from, 'yyyy/MM/dd')}，请点击结束日期
           </span>
         ) : (
           <span className="text-xs text-slate-400">

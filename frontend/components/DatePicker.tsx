@@ -42,7 +42,7 @@ export default function DatePicker({ value, onChange, placeholder = '选择日�
   }
 
   const displayValue = value
-    ? format(new Date(value + 'T00:00:00'), 'yyyy年MM月dd日')
+    ? format(new Date(value + 'T00:00:00'), 'yyyy/MM/dd')
     : placeholder
 
   return (
