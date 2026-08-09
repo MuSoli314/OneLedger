@@ -1,5 +1,30 @@
 // 类型定义
-export type TransactionType = 'expense' | 'income' | 'ignore'
+
+// 内置收支类型代号（兜底用，与旧数据兼容）
+export const BUILTIN_TX_CODES = ['expense', 'income', 'ignore'] as const
+export type BuiltinTxCode = (typeof BUILTIN_TX_CODES)[number]
+
+// 收支类型：记录里存的是内部代号 code（可能是自定义的 t_<id>），故放宽为 string
+export type TransactionType = string
+
+// 收支类型的统计归属
+export type TxCategory = 'expense' | 'income' | 'ignore'
+
+// 收支类型配置（来自 tx_types 表）
+export interface TxTypeConfig {
+  id: number
+  code: string
+  name: string
+  icon: string
+  category: TxCategory
+}
+
+// 支付方式配置（来自 payment_methods 表）
+export interface PaymentMethodConfig {
+  id: number
+  name: string
+  icon: string
+}
 
 // 时间范围模式：近一周 / 近一月 / 本月 / 上月 / 历史月份 / 自定义
 export type RangeMode = 'week' | '30d' | 'month' | 'lastMonth' | 'history' | 'custom'
