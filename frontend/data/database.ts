@@ -331,7 +331,7 @@ function csvField(value: string | number): string {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 
-export function expensesToCSV(expenses: Expense[], txTypes: TxTypeConfig[] = []): string {
+export function expensesToCSV(expenses: Expense[], txTypes: TxTypeConfig[]): string {
   const headers = ['日期', '一级分类', '二级分类', '金额(元)', '支付方式', '备注', '收支类型']
   const typeMap = new Map(txTypes.map((t) => [t.code, t.name]))
   const rows = expenses.map((e) =>

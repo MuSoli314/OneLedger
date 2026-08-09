@@ -23,7 +23,7 @@ import {
 } from '../data/database'
 import { localDateString, localMonthString, formatMonth, getRangeDates, addDays } from '../data/dateUtils'
 import { format } from 'date-fns'
-import { PAYMENT_METHODS } from '../data/categories'
+import { useSettings } from '../contexts/SettingsContext'
 import { useCategories } from '../contexts/CategoryContext'
 import type { Expense, Budget, TransactionType, RangeMode, TrendPoint } from '../data/types'
 
@@ -50,6 +50,7 @@ const RANGE_PILLS: { key: RangeMode; label: string }[] = [
 
 export default function HomePage() {
   const { categories } = useCategories()
+  const { paymentMethods, txTypes, expenseCodes } = useSettings()
   const [expenses, setExpenses] = useState<Expense[]>([])
   // 数据版本号：每次 loadData() 完成后自增。右栏统计面板 / 顶部趋势图用它做刷新信号，
   // 否则编辑/删除/新增后只有蓝色卡片（直接由 expenses 推导）会变，图表不重新查库。
@@ -292,7 +293,7 @@ export default function HomePage() {
 
   // 卡片统计：expenses 已按时间范围筛选，直接汇总
   const expenseTotal = expenses
-    .filter((e) => e.type === 'expense')
+    .filter((e) => expenseCodes.has(e.type))
     .reduce((sum, e) => sum + e.amount, 0)
 
   const recordCount = expenses.length
@@ -348,14 +349,14 @@ export default function HomePage() {
   const paymentTotals = useMemo(() => {
     const map = new Map<string, number>()
     for (const e of expenses) {
-      if (e.type !== 'expense') continue
+      if (!expenseCodes.has(e.type)) continue
       const key = e.payment_method || '未设置'
       map.set(key, (map.get(key) ?? 0) + e.amount)
     }
     return [...map.entries()]
       .map(([name, total]) => ({ name, total }))
       .sort((a, b) => b.total - a.total)
-  }, [expenses])
+  }, [expenses, expenseCodes])
 
   // 预算进度
   const budgetPct = !!budget?.amount && budget.amount > 0
@@ -420,7 +421,7 @@ export default function HomePage() {
         if (aCat !== bCat) return aCat - bCat
         return a.id - b.id
       })
-      const csv = expensesToCSV(all)
+      const csv = expensesToCSV(all, txTypes)
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -617,7 +618,7 @@ export default function HomePage() {
               <div className="mt-4 pt-3 border-t border-white/20">
                 <div className="grid grid-cols-3 gap-1.5">
                   {paymentTotals.map(({ name, total }) => {
-                    const icon = PAYMENT_METHODS.find((p) => p.name === name)?.icon || '💳'
+                    const icon = paymentMethods.find((p) => p.name === name)?.icon || '💳'
                     const pct = expenseTotal > 0 ? (total / expenseTotal) * 100 : 0
                     const active = paymentFilter === name
                     return (
