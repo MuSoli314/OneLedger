@@ -35,6 +35,18 @@ export default function Layout() {
             >
               分类
             </NavLink>
+            <NavLink
+              to="/settings"
+              className={({ isActive }) =>
+                `px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                  isActive
+                    ? 'bg-white text-slate-800 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`
+              }
+            >
+              设置
+            </NavLink>
           </nav>
         </div>
       </header>
