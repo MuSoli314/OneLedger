@@ -1,4 +1,5 @@
 import Database from '@tauri-apps/plugin-sql'
+import { isTauri, createWebDbConnection, type DbConnection } from './webDb'
 import type { Expense, ExpenseInput, Budget, TrendPoint, CategoryWithChildren, TransactionType, DailyTrendPoint, MonthlyStats, PaymentMethodConfig, TxTypeConfig, TxCategory } from './types'
 import { categories as defaultCategories, DEFAULT_PAYMENT_METHODS, DEFAULT_TX_TYPES } from './categories'
 
@@ -7,10 +8,10 @@ import { categories as defaultCategories, DEFAULT_PAYMENT_METHODS, DEFAULT_TX_TY
 export const CAT_KEY_SEP = '§'
 export const catKey = (l1: string, l2: string) => `${l1}${CAT_KEY_SEP}${l2}`
 
-let db: Database | null = null
-let dbInit: Promise<Database> | null = null
+let db: DbConnection | null = null
+let dbInit: Promise<DbConnection> | null = null
 
-async function getDb(): Promise<Database> {
+async function getDb(): Promise<DbConnection> {
   if (db) return db
   if (!dbInit) {
     dbInit = connectDb()
@@ -19,10 +20,13 @@ async function getDb(): Promise<Database> {
 }
 
 /** 尝试连接数据库，失败时自动重试 */
-async function connectDb(retries = 2): Promise<Database> {
+async function connectDb(retries = 2): Promise<DbConnection> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const conn = await Database.load('sqlite:one_ledger.db')
+      // 桌面版（Tauri）用原生 SQL 插件；网页版用浏览器内运行的 sql.js，接口形状一致
+      const conn: DbConnection = isTauri()
+        ? await Database.load('sqlite:one_ledger.db')
+        : await createWebDbConnection()
 
       // 确保消费记录表存在（含 payment_method 和 type 字段）
       await conn.execute(

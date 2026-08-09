@@ -105,6 +105,15 @@ Claude Code 为本项目生成的**记忆文件**和**工作文档**存放在项
 - [x] 首页改版（两栏仪表盘布局 + 时间范围联动：近一周 / 近一月 / 本月 / 历史月份）
 - [x] 按分类筛选（分类排行勾选大类/小类复选筛选记录列表，与支付方式筛选叠加生效）
 
+### ✅ 双形态：桌面版 + 网页版（已完成）
+- [x] 网页版数据层（浏览器内运行 SQLite + IndexedDB 本地持久化，`webDb.ts`）
+- [x] 网页版部署配置（`vercel.json` SPA 重写 + 部署指南 `WEB_DEPLOY.md`）
+- 同一套前端代码跑桌面版（Tauri）与网页版，运行时按环境自动切换数据层：
+  - 桌面版：Tauri SQL 插件（`Database.load('sqlite:one_ledger.db')`）
+  - 网页版：sql.js（浏览器内 SQLite，数据存浏览器 IndexedDB）
+- 数据不互通：桌面版数据在本地 DB 文件，网页版数据在各用户自己的浏览器里，互不影响。
+- 网页版数据跟随浏览器，换设备/清缓存会丢，需提醒用户定期导出 CSV。
+
 ---
 
 ## 技术架构
@@ -116,7 +125,8 @@ OneLedger/
 │   │   ├── types.ts              # TypeScript 类型定义
 │   │   ├── categories.ts         # 默认消费分类数据 + 支付方式
 │   │   ├── dateUtils.ts          # 本地日期工具（避免 UTC 时区问题）
-│   │   └── database.ts           # SQLite 数据库操作（含分类表）
+│   │   ├── database.ts           # SQLite 数据库操作（含分类表，桌面/网页自适应）
+│   │   └── webDb.ts              # 网页版数据层（sql.js + IndexedDB 持久化）
 │   ├── contexts/
 │   │   └── CategoryContext.tsx    # 分类数据共享 Context
 │   ├── components/
