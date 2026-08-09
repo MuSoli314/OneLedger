@@ -2,8 +2,10 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useCategories } from '../contexts/CategoryContext'
 import { useSettings } from '../contexts/SettingsContext'
 import type { TransactionType } from '../data/types'
+import { evaluateExpression } from '../data/calcUtils'
 import { EMOJI_LIST } from '../data/emojis'
 import { IconPickerButton, EmojiPickerGrid } from '../components/EmojiPicker'
+import InlineSelect from '../components/InlineSelect'
 import ConfirmDialog from '../components/ConfirmDialog'
 import {
   DndContext,
@@ -22,6 +24,9 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+
+/** 小类行内编辑可聚焦的字段 */
+type EditField = 'subName' | 'defaultAmount' | 'defaultPaymentMethod' | 'defaultType' | 'defaultNote'
 
 /** 拖拽手柄图标（六点 grip） */
 function DragHandle(props: React.HTMLAttributes<HTMLButtonElement>) {
@@ -234,10 +239,12 @@ function SortableSubCategoryRow({
   editingSubId,
   subEditForm,
   subEditRef,
+  focusField,
   onToggleDefault,
   onStartEdit,
   onSubEditFormChange,
   onSubEditKeyDown,
+  onAutoSave,
   onDelete,
 }: {
   id: string
@@ -246,10 +253,13 @@ function SortableSubCategoryRow({
   editingSubId: number | null
   subEditForm: { subName: string; defaultNote: string; defaultPaymentMethod: string; defaultAmount: string; defaultType: TransactionType }
   subEditRef: React.RefObject<HTMLDivElement | null>
+  focusField: EditField | null
   onToggleDefault: () => void
-  onStartEdit: () => void
+  onStartEdit: (field?: EditField) => void
   onSubEditFormChange: (form: { subName: string; defaultNote: string; defaultPaymentMethod: string; defaultAmount: string; defaultType: TransactionType }) => void
   onSubEditKeyDown: (e: React.KeyboardEvent) => void
+  /** 下拉选择后自动保存（选完即存并退出编辑） */
+  onAutoSave: (form: { subName: string; defaultNote: string; defaultPaymentMethod: string; defaultAmount: string; defaultType: TransactionType }) => void
   onDelete: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
@@ -261,11 +271,35 @@ function SortableSubCategoryRow({
     opacity: isDragging ? 0.35 : undefined,
   }
 
+  // 编辑控件 refs，按 focusField 聚焦
+  const subNameRef = useRef<HTMLInputElement | null>(null)
+  const subAmountRef = useRef<HTMLInputElement | null>(null)
+  const subPayRef = useRef<HTMLButtonElement | null>(null)
+  const subTypeRef = useRef<HTMLButtonElement | null>(null)
+  const subNoteRef = useRef<HTMLInputElement | null>(null)
+
+  // 进入编辑态后按 focusField 聚焦对应编辑控件
+  useEffect(() => {
+    if (!isEditing) return
+    const refMap: Record<EditField, React.RefObject<HTMLInputElement | HTMLButtonElement | null>> = {
+      subName: subNameRef,
+      defaultAmount: subAmountRef,
+      defaultPaymentMethod: subPayRef,
+      defaultType: subTypeRef,
+      defaultNote: subNoteRef,
+    }
+    const el = refMap[focusField || 'subName']?.current
+    if (!el) return
+    el.focus()
+    // oxlint 误报 focusField 非响应式，实际是父组件传入的 props
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditing, focusField])
+
   return (
     <div
       ref={isEditing && editingSubId !== -1 ? subEditRef : setNodeRef}
       style={isEditing && editingSubId !== -1 ? undefined : style}
-      onClick={onStartEdit}
+      onClick={() => onStartEdit()}
       className={`flex items-center gap-2 px-2 pl-2 py-1 text-base transition-colors border-b border-slate-50 ${
         isEditing
           ? 'bg-indigo-50 border-l-2 border-l-primary'
@@ -306,12 +340,17 @@ function SortableSubCategoryRow({
           onChange={(e) => onSubEditFormChange({ ...subEditForm, subName: e.target.value })}
           placeholder="小类名称"
           className="text-xs border border-slate-200 rounded-lg px-2 h-8 w-[110px] flex-shrink-0 bg-white focus:outline-none focus:border-primary text-slate-700"
+          ref={subNameRef}
           onClick={(e) => e.stopPropagation()}
           onKeyDown={onSubEditKeyDown}
-          autoFocus
         />
       ) : (
-        <span className="text-sm font-medium text-slate-700 w-[110px] flex-shrink-0 truncate">{sub.name}</span>
+        <span
+          className="text-sm font-medium text-slate-700 w-[110px] flex-shrink-0 truncate"
+          onClick={(e) => { e.stopPropagation(); onStartEdit('subName') }}
+        >
+          {sub.name}
+        </span>
       )}
 
       {/* 编辑区 */}
@@ -326,30 +365,39 @@ function SortableSubCategoryRow({
               placeholder="金额"
               className="w-[90px] text-xs border border-slate-200 rounded-lg px-2 h-8 bg-white focus:outline-none focus:border-primary text-right font-semibold tabular-nums"
               style={{ color: subEditForm.defaultType === 'income' ? '#10b981' : subEditForm.defaultType === 'ignore' ? '#94a3b8' : '#ef4444' }}
+              ref={subAmountRef}
               onClick={(e) => e.stopPropagation()}
               onKeyDown={onSubEditKeyDown}
             />
-            <select
+            <InlineSelect
               value={subEditForm.defaultPaymentMethod}
-              onChange={(e) => onSubEditFormChange({ ...subEditForm, defaultPaymentMethod: e.target.value })}
-              className="w-[90px] text-xs border border-slate-200 rounded-lg px-1.5 h-8 bg-white focus:outline-none focus:border-primary text-slate-500"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <option value="">支付方式</option>
-              {paymentMethods.map((pm) => (
-                <option key={pm.name} value={pm.name}>{pm.icon} {pm.name}</option>
-              ))}
-            </select>
-            <select
+              options={paymentMethods.map((pm) => ({ value: pm.name, label: <span className="inline-flex items-center gap-1">{pm.icon} {pm.name}</span> }))}
+              placeholder="支付方式"
+              initialOpen={focusField === 'defaultPaymentMethod'}
+              textColor="text-slate-500"
+              ref={subPayRef}
+              className="w-[90px] flex-shrink-0"
+              onChange={(v) => {
+                // 已有小类：选完即自动保存退出编辑
+                const newForm = { ...subEditForm, defaultPaymentMethod: v }
+                onSubEditFormChange(newForm)
+                onAutoSave(newForm)
+              }}
+            />
+            <InlineSelect
               value={subEditForm.defaultType}
-              onChange={(e) => onSubEditFormChange({ ...subEditForm, defaultType: e.target.value as TransactionType })}
-              className="w-[80px] text-xs border border-slate-200 rounded-lg px-1.5 h-8 bg-white focus:outline-none focus:border-primary text-slate-600"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {txTypes.map((t) => (
-                <option key={t.code} value={t.code}>{t.icon} {t.name}</option>
-              ))}
-            </select>
+              options={txTypes.map((t) => ({ value: t.code, label: <span className="inline-flex items-center gap-1">{t.icon} {t.name}</span> }))}
+              initialOpen={focusField === 'defaultType'}
+              textColor="text-slate-600"
+              ref={subTypeRef}
+              className="w-[80px] flex-shrink-0"
+              onChange={(v) => {
+                // 已有小类：选完即自动保存退出编辑
+                const newForm = { ...subEditForm, defaultType: v as TransactionType }
+                onSubEditFormChange(newForm)
+                onAutoSave(newForm)
+              }}
+            />
             <div className="flex-1 min-w-0">
               <input
                 type="text"
@@ -357,6 +405,7 @@ function SortableSubCategoryRow({
                 onChange={(e) => onSubEditFormChange({ ...subEditForm, defaultNote: e.target.value })}
                 placeholder="备注"
                 className="w-full text-xs border border-slate-200 rounded-lg px-2 h-8 bg-white focus:outline-none focus:border-primary text-slate-700"
+                ref={subNoteRef}
                 onClick={(e) => e.stopPropagation()}
                 onKeyDown={onSubEditKeyDown}
               />
@@ -364,16 +413,22 @@ function SortableSubCategoryRow({
           </div>
         ) : (
           <div className="flex items-center gap-2">
-            <span className={`text-sm font-semibold tabular-nums w-[100px] text-right flex-shrink-0 ${
-              sub.defaultType === 'income' ? 'text-emerald-500' : sub.defaultType === 'ignore' ? 'text-slate-400' : 'text-expense'
-            }`}>
+            <span
+              className={`text-sm font-semibold tabular-nums w-[100px] text-right flex-shrink-0 ${
+                sub.defaultType === 'income' ? 'text-emerald-500' : sub.defaultType === 'ignore' ? 'text-slate-400' : 'text-expense'
+              }`}
+              onClick={(e) => { e.stopPropagation(); onStartEdit('defaultAmount') }}
+            >
               {sub.defaultAmount > 0
                 ? `${sub.defaultType === 'income' ? '+' : sub.defaultType === 'ignore' ? '' : '-'}¥${sub.defaultAmount.toFixed(2)}`
                 : ''
               }
             </span>
             {sub.defaultPaymentMethod ? (
-              <span className="inline-flex items-center gap-0.5 text-sm text-slate-400 bg-slate-100 px-2 py-1 rounded-full flex-shrink-0">
+              <span
+                className="inline-flex items-center gap-0.5 text-sm text-slate-400 bg-slate-100 px-2 py-1 rounded-full flex-shrink-0"
+                onClick={(e) => { e.stopPropagation(); onStartEdit('defaultPaymentMethod') }}
+              >
                 {(() => {
                   const pm = paymentMethods.find((p) => p.name === sub.defaultPaymentMethod)
                   return pm ? pm.icon : ''
@@ -381,18 +436,27 @@ function SortableSubCategoryRow({
                 {sub.defaultPaymentMethod}
               </span>
             ) : (
-              <span className="w-[90px] flex-shrink-0" />
+              <span
+                className="w-[90px] flex-shrink-0"
+                onClick={(e) => { e.stopPropagation(); onStartEdit('defaultPaymentMethod') }}
+              />
             )}
-            <span className={`inline-flex items-center gap-1 text-sm px-2 py-1 rounded-full flex-shrink-0 ${
-              sub.defaultType === 'income'
-                ? 'text-emerald-600 bg-emerald-50'
-                : sub.defaultType === 'ignore'
-                ? 'text-slate-500 bg-slate-200'
-                : 'text-red-500 bg-red-50'
-            }`}>
+            <span
+              className={`inline-flex items-center gap-1 text-sm px-2 py-1 rounded-full flex-shrink-0 ${
+                sub.defaultType === 'income'
+                  ? 'text-emerald-600 bg-emerald-50'
+                  : sub.defaultType === 'ignore'
+                  ? 'text-slate-500 bg-slate-200'
+                  : 'text-red-500 bg-red-50'
+              }`}
+              onClick={(e) => { e.stopPropagation(); onStartEdit('defaultType') }}
+            >
               {sub.defaultType === 'income' ? '💰 收入' : sub.defaultType === 'ignore' ? '⏭️ 不计' : '💸 支出'}
             </span>
-            <div className="flex-1 min-w-0">
+            <div
+              className="flex-1 min-w-0"
+              onClick={(e) => { e.stopPropagation(); onStartEdit('defaultNote') }}
+            >
               <span className="text-sm text-slate-400 truncate block">
                 {sub.defaultNote || '-'}
               </span>
@@ -462,6 +526,8 @@ export default function CategoryManager() {
   // 编辑小类（名称 + 默认模板）
   const [editingSubId, setEditingSubId] = useState<number | null>(null)
   const [subEditForm, setSubEditForm] = useState({ subName: '', defaultNote: '', defaultPaymentMethod: '', defaultAmount: '', defaultType: 'expense' as TransactionType })
+  // 进入编辑时聚焦哪个字段（点哪个格子聚焦哪个）
+  const [focusField, setFocusField] = useState<EditField | null>(null)
   const subEditRef = useRef<HTMLDivElement>(null)
   const editingSubIdRef = useRef<number | null>(null)
   const subEditFormRef = useRef(subEditForm)
@@ -492,11 +558,15 @@ export default function CategoryManager() {
       await updateSubCategoryDefaults(id, {
         defaultNote: form.defaultNote,
         defaultPaymentMethod: form.defaultPaymentMethod,
-        defaultAmount: parseFloat(form.defaultAmount) || 0,
+        defaultAmount: evaluateExpression(form.defaultAmount) || 0,
         defaultType: form.defaultType,
       })
     }
-    setEditingSubId(null)
+    // 保存期间用户可能已切到别的行/新增行，避免误关
+    if (editingSubIdRef.current === id) {
+      setEditingSubId(null)
+      setFocusField(null)
+    }
   }, [pendingAddCatId, addSubCategory, updateSubCategoryName, updateSubCategoryDefaults])
 
   // 点击行外自动保存
@@ -567,8 +637,9 @@ export default function CategoryManager() {
     }
   }
 
-  const startEditSub = (sub: { id: number; name: string; isDefault: boolean; defaultNote: string; defaultPaymentMethod: string; defaultAmount: number; defaultType: TransactionType }) => {
+  const startEditSub = (sub: { id: number; name: string; isDefault: boolean; defaultNote: string; defaultPaymentMethod: string; defaultAmount: number; defaultType: TransactionType }, field: EditField = 'subName') => {
     setEditingSubId(sub.id)
+    setFocusField(field)
     setSubEditForm({
       subName: sub.name,
       defaultNote: sub.defaultNote || '',
@@ -581,6 +652,7 @@ export default function CategoryManager() {
   const handleAddSubClick = (catId: number) => {
     setPendingAddCatId(catId)
     setEditingSubId(-1)
+    setFocusField(null)
     setSubEditForm({ subName: '', defaultNote: '', defaultPaymentMethod: '', defaultAmount: '', defaultType: 'expense' })
   }
 
@@ -737,10 +809,12 @@ export default function CategoryManager() {
                               editingSubId={editingSubId}
                               subEditForm={subEditForm}
                               subEditRef={subEditRef}
+                              focusField={focusField}
                               onToggleDefault={() => toggleSubCategoryDefault(sub.id, !sub.isDefault)}
-                              onStartEdit={() => !isEditing && startEditSub(sub)}
+                              onStartEdit={(field) => !isEditing && startEditSub(sub, field)}
                               onSubEditFormChange={setSubEditForm}
                               onSubEditKeyDown={handleSubEditKeyDown}
+                              onAutoSave={(form) => doSaveSub(sub.id, form)}
                               onDelete={() => setDeleteTarget({ type: 'subcategory', id: sub.id, name: sub.name })}
                             />
                           )
@@ -779,27 +853,21 @@ export default function CategoryManager() {
                               onClick={(e) => e.stopPropagation()}
                               onKeyDown={handleSubEditKeyDown}
                             />
-                            <select
+                            <InlineSelect
                               value={subEditForm.defaultPaymentMethod}
-                              onChange={(e) => setSubEditForm({ ...subEditForm, defaultPaymentMethod: e.target.value })}
-                              className="w-[90px] text-xs border border-slate-200 rounded-lg px-1.5 h-8 bg-white focus:outline-none focus:border-primary text-slate-500"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <option value="">支付方式</option>
-                              {paymentMethods.map((pm) => (
-                                <option key={pm.name} value={pm.name}>{pm.icon} {pm.name}</option>
-                              ))}
-                            </select>
-                            <select
+                              options={paymentMethods.map((pm) => ({ value: pm.name, label: <span className="inline-flex items-center gap-1">{pm.icon} {pm.name}</span> }))}
+                              placeholder="支付方式"
+                              textColor="text-slate-500"
+                              className="w-[90px] flex-shrink-0"
+                              onChange={(v) => setSubEditForm({ ...subEditForm, defaultPaymentMethod: v })}
+                            />
+                            <InlineSelect
                               value={subEditForm.defaultType}
-                              onChange={(e) => setSubEditForm({ ...subEditForm, defaultType: e.target.value as TransactionType })}
-                              className="w-[80px] text-xs border border-slate-200 rounded-lg px-1.5 h-8 bg-white focus:outline-none focus:border-primary text-slate-600"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {txTypes.map((t) => (
-                                <option key={t.code} value={t.code}>{t.icon} {t.name}</option>
-                              ))}
-                            </select>
+                              options={txTypes.map((t) => ({ value: t.code, label: <span className="inline-flex items-center gap-1">{t.icon} {t.name}</span> }))}
+                              textColor="text-slate-600"
+                              className="w-[80px] flex-shrink-0"
+                              onChange={(v) => setSubEditForm({ ...subEditForm, defaultType: v as TransactionType })}
+                            />
                             <div className="flex-1 min-w-0">
                               <input
                                 type="text"

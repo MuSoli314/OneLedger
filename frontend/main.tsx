@@ -5,13 +5,16 @@ import './index.css'
 import App from './App'
 import { CategoryProvider } from './contexts/CategoryContext'
 import { SettingsProvider } from './contexts/SettingsContext'
+import { HomeFilterProvider } from './contexts/HomeFilterContext'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
       <CategoryProvider>
         <SettingsProvider>
-          <App />
+          <HomeFilterProvider>
+            <App />
+          </HomeFilterProvider>
         </SettingsProvider>
       </CategoryProvider>
     </BrowserRouter>

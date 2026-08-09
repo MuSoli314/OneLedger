@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import ExpenseList from '../components/ExpenseList'
-import ExpenseForm from '../components/ExpenseForm'
 import ConfirmDialog from '../components/ConfirmDialog'
 import DatePicker from '../components/DatePicker'
 import DateRangePicker from '../components/DateRangePicker'
@@ -25,6 +24,7 @@ import { localDateString, localMonthString, formatMonth, getRangeDates, addDays 
 import { format } from 'date-fns'
 import { useSettings } from '../contexts/SettingsContext'
 import { useCategories } from '../contexts/CategoryContext'
+import { useHomeFilter } from '../contexts/HomeFilterContext'
 import type { Expense, Budget, TransactionType, RangeMode, TrendPoint } from '../data/types'
 
 // 把趋势数据补齐为连续 N 个月（缺记录的月份补 0），保证折线不断档
@@ -51,19 +51,22 @@ const RANGE_PILLS: { key: RangeMode; label: string }[] = [
 export default function HomePage() {
   const { categories } = useCategories()
   const { paymentMethods, txTypes, expenseCodes } = useSettings()
+  const {
+    rangeMode, setRangeMode,
+    historyMonth, setHistoryMonth,
+    customRange, setCustomRange,
+    paymentFilter, setPaymentFilter,
+    selectedCats, setSelectedCats,
+    trendCategory, setTrendCategory,
+    clearFilters,
+  } = useHomeFilter()
   const [expenses, setExpenses] = useState<Expense[]>([])
   // 数据版本号：每次 loadData() 完成后自增。右栏统计面板 / 顶部趋势图用它做刷新信号，
   // 否则编辑/删除/新增后只有蓝色卡片（直接由 expenses 推导）会变，图表不重新查库。
   const [dataVersion, setDataVersion] = useState(0)
-  const [showForm, setShowForm] = useState(false)
-  // 时间范围：近一周 / 近一月 / 本月（默认）/ 上月 / 历史月份 / 自定义
-  const [rangeMode, setRangeMode] = useState<RangeMode>('month')
-  const [historyMonth, setHistoryMonth] = useState('') // 仅 rangeMode='history' 时有效
-  const [customRange, setCustomRange] = useState<{ start: string; end: string }>({ start: localDateString(), end: localDateString() })
   const [showCustomPicker, setShowCustomPicker] = useState(false)
   const [months, setMonths] = useState<string[]>([])
   const [trendData, setTrendData] = useState<TrendPoint[]>([])
-  const [trendCategory, setTrendCategory] = useState('') // '' 表示「全天」（所有大类按月汇总）
   const [loading, setLoading] = useState(true)
   const [budget, setBudgetData] = useState<Budget | null>(null)
   const [budgetDraft, setBudgetDraft] = useState('') // 预算内联文本框内容
@@ -74,9 +77,6 @@ export default function HomePage() {
   const [showDateAdder, setShowDateAdder] = useState(false)
   const [addingDate, setAddingDate] = useState('')
   const [addedDates, setAddedDates] = useState<string[]>([])
-  const [paymentFilter, setPaymentFilter] = useState('') // 按支付方式筛选列表，'' 表示不筛选
-  // 按分类筛选：Set 里存的是「大类+小类」组合键（catKey）。选了某大类 = 它所有小类都选中
-  const [selectedCats, setSelectedCats] = useState<Set<string>>(new Set())
 
   const thisMonth = localMonthString()
 
@@ -248,16 +248,6 @@ export default function HomePage() {
     loadData()
   }
 
-  const handleFormSuccess = () => {
-    setShowForm(false)
-    loadData()
-    refreshBudget()
-  }
-
-  const handleFormCancel = () => {
-    setShowForm(false)
-  }
-
   // 保存某一天：有默认小类的分类自动存成记录，没有默认小类的只加空白日期。
   // 右下角弹窗的「添加」和顶部快捷按钮共用此函数，保证两个入口行为一致。
   const saveNewDate = async (date: string) => {
@@ -312,7 +302,7 @@ export default function HomePage() {
       }
       return next
     })
-  }, [])
+  }, [setSelectedCats])
 
   // 勾选某小类：单独选中/取消
   const toggleSubCategory = useCallback((l1: string, l2: string) => {
@@ -323,19 +313,13 @@ export default function HomePage() {
       else next.add(k)
       return next
     })
-  }, [])
+  }, [setSelectedCats])
 
   // 判断某小类是否被选中（用于复选框勾选态 + 列表筛选）
   const isCatSelected = useCallback(
     (l1: string, l2: string) => selectedCats.has(catKey(l1, l2)),
     [selectedCats]
   )
-
-  // 清理全部筛选（支付方式 + 分类）
-  const clearFilters = () => {
-    setPaymentFilter('')
-    setSelectedCats(new Set())
-  }
 
   // 分类筛选后的列表（勾选的每个小类都保留；大小类筛选与支付方式筛选叠加生效）
   const filteredExpenses = useMemo(() => {
@@ -506,7 +490,7 @@ export default function HomePage() {
                   ))}
                 </select>
                 <button
-                  onClick={() => { setRangeMode('custom'); setShowCustomPicker(true) }}
+                  onClick={() => setShowCustomPicker(true)}
                   className={`w-48 whitespace-nowrap text-center text-xs rounded-lg px-2.5 py-1 transition-colors ${
                     rangeMode === 'custom'
                       ? 'bg-white/30 font-semibold'
@@ -526,12 +510,15 @@ export default function HomePage() {
                 </button>
             </div>
 
-            {rangeMode === 'custom' && showCustomPicker && (
+            {showCustomPicker && (
               <div className="bg-white rounded-xl p-4 mb-4 text-slate-900 w-fit max-w-full overflow-x-auto">
                 <DateRangePicker
                   start={customRange.start}
                   end={customRange.end}
-                  onChange={(range) => setCustomRange(range)}
+                  onChange={(range) => {
+                    setCustomRange(range)
+                    setRangeMode('custom')
+                  }}
                   onComplete={() => setShowCustomPicker(false)}
                   onCancel={() => setShowCustomPicker(false)}
                 />
@@ -748,14 +735,6 @@ export default function HomePage() {
             </div>
           </div>
         </div>
-      )}
-
-      {/* 表单弹窗 */}
-      {showForm && (
-        <ExpenseForm
-          onSuccess={handleFormSuccess}
-          onCancel={handleFormCancel}
-        />
       )}
 
       {/* 删除确认弹窗（单条记录） */}

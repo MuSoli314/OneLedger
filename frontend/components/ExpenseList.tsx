@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
+import InlineSelect from './InlineSelect'
 import { useSettings } from '../contexts/SettingsContext'
 import { addExpense } from '../data/database'
+import { evaluateExpression } from '../data/calcUtils'
 import { useCategories } from '../contexts/CategoryContext'
 import type { Expense, TransactionType } from '../data/types'
 import { format } from 'date-fns'
@@ -27,6 +29,9 @@ interface LocalRow {
   payment_method: string
   type: TransactionType
 }
+
+/** 行内编辑可聚焦的字段 */
+type EditField = 'category_l2' | 'amount' | 'payment_method' | 'type' | 'note'
 
 function formatDate(dateStr: string): string {
   try {
@@ -85,6 +90,14 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
 
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editForm, setEditForm] = useState({ category_l2: '', note: '', amount: '', payment_method: '', type: 'expense' as TransactionType })
+  // 进入编辑时聚焦哪个字段（点哪个格子聚焦哪个）
+  const [focusField, setFocusField] = useState<EditField | null>(null)
+  // 编辑控件 refs，按 focusField 聚焦
+  const categoryL2Ref = useRef<HTMLButtonElement | null>(null)
+  const amountRef = useRef<HTMLInputElement | null>(null)
+  const paymentRef = useRef<HTMLButtonElement | null>(null)
+  const typeRef = useRef<HTMLButtonElement | null>(null)
+  const noteRef = useRef<HTMLInputElement | null>(null)
   const [addingDate, setAddingDate] = useState<string | null>(null)
   const [hoverL1, setHoverL1] = useState<string | null>(null)
   const [customizingL1, setCustomizingL1] = useState<string | null>(null)
@@ -118,9 +131,14 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
     })
   }
 
-  const startEditing = (expense: Expense) => {
-    if (editingId === expense.id) return
+  const startEditing = (expense: Expense, field: EditField = 'category_l2') => {
+    if (editingId === expense.id) {
+      // 已在编辑中：只切换聚焦字段（切换下拉时同帧 showPicker 需要 onBlur 处理）
+      setFocusField(field)
+      return
+    }
     setEditingId(expense.id)
+    setFocusField(field)
     setEditForm({
       category_l2: expense.category_l2,
       note: expense.note,
@@ -136,6 +154,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
     const row = rows.find((r) => r.tempId === tempId)
     if (!row) {
       setEditingId(null)
+      setFocusField(null)
       return
     }
 
@@ -145,12 +164,13 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
     if (!form.category_l2) {
       setLocalRows((prev) => prev.filter((r) => r.tempId !== tempId))
       setEditingId(null)
+      setFocusField(null)
       return
     }
 
-    // 金额必须大于 0
-    const amountNum = parseFloat(form.amount)
-    if (isNaN(amountNum) || amountNum <= 0) {
+    // 金额必须大于 0（支持算式，如 5*2 自动计算）
+    const amountNum = evaluateExpression(form.amount)
+    if (amountNum === null || amountNum <= 0) {
       alert('请填写大于 0 的金额；如想放弃本条，请清空小类')
       return
     }
@@ -158,7 +178,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
     // 有小类 → 真正保存到数据库
     try {
       await addExpense({
-        amount: Math.round(amountNum * 100) / 100,
+        amount: amountNum,
         category_l1: row.category_l1,
         category_l2: form.category_l2,
         date: row.date,
@@ -167,7 +187,11 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
         type: form.type || 'expense',
       })
       setLocalRows((prev) => prev.filter((r) => r.tempId !== tempId))
-      setEditingId(null)
+      // 保存期间用户可能已切到别的行，避免误关
+      if (editingIdRef.current === tempId) {
+        setEditingId(null)
+        setFocusField(null)
+      }
       // 刷新父组件数据，让新记录显示出来
       onRefresh?.()
     } catch (err) {
@@ -181,28 +205,34 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
     const expense = expenses.find((ex) => ex.id === id)
     if (!expense) {
       setEditingId(null)
+      setFocusField(null)
       return
     }
     // 没变化就直接退出编辑
     if (
       form.category_l2 === expense.category_l2 &&
       form.note === expense.note &&
-      parseFloat(form.amount) === expense.amount &&
+      evaluateExpression(form.amount) === expense.amount &&
       (form.payment_method || '') === (expense.payment_method || '') &&
       (form.type || 'expense') === (expense.type || 'expense')
     ) {
       setEditingId(null)
+      setFocusField(null)
       return
     }
-    // 金额必须大于 0
-    const amountNum = parseFloat(form.amount)
-    if (isNaN(amountNum) || amountNum <= 0) {
+    // 金额必须大于 0（支持算式，如 5*2 自动计算）
+    const amountNum = evaluateExpression(form.amount)
+    if (amountNum === null || amountNum <= 0) {
       alert('请输入正确的金额（大于 0）')
       return
     }
     try {
-      await onUpdate(expense.id, form.category_l2, form.note, Math.round(amountNum * 100) / 100, form.payment_method || '', form.type || 'expense')
-      setEditingId(null)
+      await onUpdate(expense.id, form.category_l2, form.note, amountNum, form.payment_method || '', form.type || 'expense')
+      // 保存期间用户可能已切到别的行，避免误关
+      if (editingIdRef.current === id) {
+        setEditingId(null)
+        setFocusField(null)
+      }
     } catch (err) {
       console.error('保存失败', err)
     }
@@ -233,6 +263,21 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
     return () => document.removeEventListener('mousedown', handleClickOutside)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingId, expenses, onUpdate])
+
+  // 进入编辑态后，按 focusField 聚焦对应编辑控件
+  useEffect(() => {
+    if (editingId === null) return
+    const refMap: Record<EditField, React.RefObject<HTMLInputElement | HTMLButtonElement | null>> = {
+      category_l2: categoryL2Ref,
+      amount: amountRef,
+      payment_method: paymentRef,
+      type: typeRef,
+      note: noteRef,
+    }
+    const el = refMap[focusField || 'category_l2']?.current
+    if (!el) return
+    el.focus()
+  }, [editingId, focusField])
 
   // 按回车保存
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -284,6 +329,8 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
     }
     setLocalRows((prev) => [...prev, newRow])
     setEditingId(id)
+    // 小类已选好，直接聚焦金额让用户输入
+    setFocusField('amount')
     setEditForm({
       category_l2: l2,
       note: sub?.defaultNote || '',
@@ -362,6 +409,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
     setLocalRows((prev) => [...prev, newRow])
     // 自动进入编辑
     setEditingId(id)
+    setFocusField('category_l2')
     setEditForm({ category_l2: '', note: '', amount: '0', payment_method: '', type: defaultExpenseCode || 'expense' })
   }
 
@@ -728,10 +776,15 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                           {/* 小类 */}
                           {isEditing ? (
                             <div className="w-[110px] flex-shrink-0">
-                              <select
+                              <InlineSelect
                                 value={editForm.category_l2}
-                                onChange={(e) => {
-                                  const newL2 = e.target.value
+                                options={getSubCategories(expense.category_l1).map((sc) => ({ value: sc, label: sc }))}
+                                placeholder="请选择小类"
+                                initialOpen={focusField === 'category_l2'}
+                                textColor={editForm.category_l2 ? 'text-slate-700' : 'text-slate-400'}
+                                ref={categoryL2Ref}
+                                className="w-full"
+                                onChange={(newL2) => {
                                   if (isLocal) {
                                     // 新增行：选择小类时自动加载模板默认值
                                     const cat = categories.find((c) => c.name === expense.category_l1)
@@ -744,22 +797,20 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                                       type: sub?.defaultType || 'expense',
                                     })
                                   } else {
-                                    // 已有记录：只改小类，保留原金额/备注/支付方式
-                                    setEditForm({ ...editForm, category_l2: newL2 })
+                                    // 已有记录：只改小类，保留原金额/备注/支付方式，选完即自动保存退出编辑
+                                    const newForm = { ...editForm, category_l2: newL2 }
+                                    setEditForm(newForm)
+                                    editFormRef.current = newForm
+                                    saveRealRow(expense.id)
                                   }
                                 }}
-                                className="w-full h-8 text-xs border border-slate-200 rounded-lg px-2 bg-white focus:outline-none focus:border-primary text-slate-700"
-                                autoFocus
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <option value="" disabled>请选择小类</option>
-                                {getSubCategories(expense.category_l1).map((sc) => (
-                                  <option key={sc} value={sc}>{sc}</option>
-                                ))}
-                              </select>
+                              />
                             </div>
                           ) : (
-                            <div className="w-[110px] min-w-0 flex-shrink-0 text-right">
+                            <div
+                              className="w-[110px] min-w-0 flex-shrink-0 text-right"
+                              onClick={(e) => { e.stopPropagation(); startEditing(expense, 'category_l2') }}
+                            >
                               <span className={`text-sm font-medium ${expense.category_l2 ? 'text-slate-700' : 'text-slate-300 italic'}`}>
                                 {expense.category_l2 || '未设置'}
                               </span>
@@ -777,15 +828,19 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                                   onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })}
                                   className="w-full h-8 text-xs border border-slate-200 rounded-lg px-2 bg-white focus:outline-none focus:border-primary text-right font-semibold tabular-nums"
                                   style={{ color: txTypeByCode.get(editForm.type)?.category === 'income' ? '#10b981' : txTypeByCode.get(editForm.type)?.category === 'ignore' ? '#94a3b8' : '#ef4444' }}
+                                  ref={amountRef}
                                   onClick={(e) => e.stopPropagation()}
                                   onKeyDown={handleKeyDown}
                                   placeholder="金额"
                                 />
                               </div>
                             ) : (
-                              <span className={`text-sm font-semibold tabular-nums w-[100px] text-right ${
-                                rowTx?.category === 'income' ? 'text-emerald-500' : rowTx?.category === 'ignore' ? 'text-slate-400' : 'text-expense'
-                              }`}>
+                              <span
+                                className={`text-sm font-semibold tabular-nums w-[100px] text-right ${
+                                  rowTx?.category === 'income' ? 'text-emerald-500' : rowTx?.category === 'ignore' ? 'text-slate-400' : 'text-expense'
+                                }`}
+                                onClick={(e) => { e.stopPropagation(); startEditing(expense, 'amount') }}
+                              >
                                 {rowTx?.category === 'income' ? '+' : rowTx?.category === 'ignore' ? '' : '-'}¥{expense.amount.toFixed(2)}
                               </span>
                             )}
@@ -794,45 +849,70 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                           {/* 支付方式 */}
                           {isEditing ? (
                             <div className="w-[90px] flex-shrink-0">
-                              <select
+                              <InlineSelect
                                 value={editForm.payment_method}
-                                onChange={(e) => setEditForm({ ...editForm, payment_method: e.target.value })}
-                                className="w-full h-8 text-xs border border-slate-200 rounded-lg px-1.5 bg-white focus:outline-none focus:border-primary text-slate-500"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <option value="">支付方式</option>
-                                {paymentMethods.map((pm) => (
-                                  <option key={pm.name} value={pm.name}>{pm.icon} {pm.name}</option>
-                                ))}
-                              </select>
+                                options={paymentMethods.map((pm) => ({ value: pm.name, label: <span className="inline-flex items-center gap-1">{pm.icon} {pm.name}</span> }))}
+                                placeholder="支付方式"
+                                initialOpen={focusField === 'payment_method'}
+                                textColor="text-slate-500"
+                                ref={paymentRef}
+                                className="w-full"
+                                onChange={(v) => {
+                                  const newForm = { ...editForm, payment_method: v }
+                                  setEditForm(newForm)
+                                  // 已有记录：选完即自动保存退出编辑；新增行仅更新表单
+                                  if (!isLocal) {
+                                    editFormRef.current = newForm
+                                    saveRealRow(expense.id)
+                                  }
+                                }}
+                              />
                             </div>
                           ) : (
                             expense.payment_method ? (
-                              <div className="w-[90px] flex-shrink-0 flex justify-end">
+                              <div
+                                className="w-[90px] flex-shrink-0 flex justify-end"
+                                onClick={(e) => { e.stopPropagation(); startEditing(expense, 'payment_method') }}
+                              >
                                 <span className="inline-flex items-center gap-1 text-sm text-slate-400 bg-slate-100 px-2 py-1 rounded-full whitespace-nowrap">
                                   {paymentMethods.find((pm) => pm.name === expense.payment_method)?.icon || ''}
                                   {expense.payment_method}
                                 </span>
                               </div>
-                            ) : <div className="w-[90px] flex-shrink-0" />
+                            ) : (
+                              <div
+                                className="w-[90px] flex-shrink-0"
+                                onClick={(e) => { e.stopPropagation(); startEditing(expense, 'payment_method') }}
+                              />
+                            )
                           )}
 
                           {/* 收支类型 */}
                           {isEditing ? (
                             <div className="w-[80px] flex-shrink-0">
-                              <select
+                              <InlineSelect
                                 value={editForm.type}
-                                onChange={(e) => setEditForm({ ...editForm, type: e.target.value as TransactionType })}
-                                className="w-full h-8 text-xs border border-slate-200 rounded-lg px-1.5 bg-white focus:outline-none focus:border-primary text-slate-600"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                {txTypes.map((t) => (
-                                  <option key={t.code} value={t.code}>{t.icon} {t.name}</option>
-                                ))}
-                              </select>
+                                options={txTypes.map((t) => ({ value: t.code, label: <span className="inline-flex items-center gap-1">{t.icon} {t.name}</span> }))}
+                                initialOpen={focusField === 'type'}
+                                textColor="text-slate-600"
+                                ref={typeRef}
+                                className="w-full"
+                                onChange={(v) => {
+                                  const newForm = { ...editForm, type: v as TransactionType }
+                                  setEditForm(newForm)
+                                  // 已有记录：选完即自动保存退出编辑；新增行仅更新表单
+                                  if (!isLocal) {
+                                    editFormRef.current = newForm
+                                    saveRealRow(expense.id)
+                                  }
+                                }}
+                              />
                             </div>
                           ) : (
-                            <div className="w-[80px] flex-shrink-0 flex justify-end">
+                            <div
+                              className="w-[80px] flex-shrink-0 flex justify-end"
+                              onClick={(e) => { e.stopPropagation(); startEditing(expense, 'type') }}
+                            >
                               <span className={`inline-flex items-center gap-1 text-sm px-2 py-1 rounded-full whitespace-nowrap ${
                                 !rowTx ? 'text-slate-500 bg-slate-200'
                                   : rowTx.category === 'expense' ? 'text-red-500 bg-red-50'
@@ -853,12 +933,16 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                                 onChange={(e) => setEditForm({ ...editForm, note: e.target.value })}
                                 placeholder="备注（可选）"
                                 className="w-full h-8 text-xs border border-slate-200 rounded-lg px-2 bg-white focus:outline-none focus:border-primary text-slate-700"
+                                ref={noteRef}
                                 onClick={(e) => e.stopPropagation()}
                                 onKeyDown={handleKeyDown}
                               />
                             </div>
                           ) : (
-                            <div className="flex-1 min-w-0">
+                            <div
+                              className="flex-1 min-w-0"
+                              onClick={(e) => { e.stopPropagation(); startEditing(expense, 'note') }}
+                            >
                               <span className="text-sm text-slate-400 truncate block">
                                 {expense.note || '-'}
                               </span>
