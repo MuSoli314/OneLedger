@@ -73,9 +73,11 @@ async function connectDb(retries = 2): Promise<DbConnection> {
           )
           const catId = result.lastInsertId as number
           for (let j = 0; j < cat.children.length; j++) {
+            // 新装默认支付方式 = 第一个默认支付方式（与界面新增小类兜底行为一致）
+            const defaultPay = DEFAULT_PAYMENT_METHODS[0]?.name ?? ''
             await conn.execute(
-              'INSERT INTO subcategories (category_id, name, is_default, sort_order) VALUES ($1, $2, 0, $3)',
-              [catId, cat.children[j].name, j]
+              'INSERT INTO subcategories (category_id, name, is_default, default_payment_method, sort_order) VALUES ($1, $2, 0, $3, $4)',
+              [catId, cat.children[j].name, defaultPay, j]
             )
           }
         }
