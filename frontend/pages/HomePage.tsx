@@ -14,14 +14,14 @@ import {
   getMonths,
   getBudget,
   setBudget,
+  deleteBudget,
   getAllExpenses,
   expensesToCSV,
   addExpense,
   getTrendData,
   catKey,
 } from '../data/database'
-import { localDateString, localMonthString, formatMonth, getRangeDates, addDays } from '../data/dateUtils'
-import { format } from 'date-fns'
+import { localDateString, localMonthString, formatMonth, getRangeDates, eachDay } from '../data/dateUtils'
 import { useSettings } from '../contexts/SettingsContext'
 import { useCategories } from '../contexts/CategoryContext'
 import { useHomeFilter } from '../contexts/HomeFilterContext'
@@ -73,7 +73,7 @@ export default function HomePage() {
   const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null)
   const [deleteDateTarget, setDeleteDateTarget] = useState<string | null>(null)
   const [deleteCategoryTarget, setDeleteCategoryTarget] = useState<{ date: string; category_l1: string } | null>(null)
-  const budgetInputRef = useRef<HTMLInputElement>(null)
+  const lastCommittedRef = useRef(0) // 上次成功保存的预算金额，用于识别原生上下箭头点击（整步 ±1000 跳变即保存）
   const [showDateAdder, setShowDateAdder] = useState(false)
   const [addingDate, setAddingDate] = useState('')
   const [addedDates, setAddedDates] = useState<string[]>([])
@@ -143,36 +143,21 @@ export default function HomePage() {
   // 已有记录的日期集合（用于"添加日期"查重）— 只覆盖当前时间范围
   const existingDates = useMemo(() => new Set(expenses.map((e) => e.date)), [expenses])
 
+  // 整月视图（本月/上月/历史月份）下缺失记录的日期——列表里为这些日期补「+ 添加」快捷行。
+  // 缺的日期会一并落入某段缺失区间：[prev+1, next-1]，其中的两端（挨着已有日期）补快捷。
+  // 展示条件与原有「添加下一天」一致：按了支付方式 / 分类筛选时不补快捷（列表聚焦筛选结果）。
+  const monthRange = (rangeMode === 'month' || rangeMode === 'lastMonth' || rangeMode === 'history') ? range : null
+  const hasAnyFilter = !!paymentFilter || selectedCats.size > 0
+  const missingDates = useMemo(() => {
+    if (!monthRange || hasAnyFilter) return []
+    const existing = new Set(expenses.map((e) => e.date))
+    const allDates = eachDay(monthRange.start, monthRange.end)
+    return allDates.filter((d) => !existing.has(d))
+  }, [monthRange, hasAnyFilter, expenses])
+
   // 快捷按钮要添加的日期 = 列表里所有日期（真实记录 + 手动添加的空白日期）的最大值 + 1 天。
   // 只在「本月」显示，且最大日期还没到这个月最后一天时才展示（可提前添加未来日期做计划；
   // 本月的查询范围已覆盖整个自然月，添加的未来日期会立刻显示在列表里）。
-  const [quickAdding, setQuickAdding] = useState(false)
-  const nextQuickDate = useMemo(() => {
-    if (rangeMode !== 'month') return null
-    let latest = ''
-    for (const e of expenses) {
-      if (e.date > latest) latest = e.date
-    }
-    for (const d of addedDates) {
-      if (d > latest) latest = d
-    }
-    if (!latest) return null
-    const next = addDays(new Date(`${latest}T00:00:00`), 1)
-    // 已到本月最后一天 → 不再提供添加快捷按钮
-    if (localDateString(next) > range.end) return null
-    return next
-  }, [expenses, addedDates, rangeMode, range.end])
-
-  // 快捷添加「下一天」：防连点，完成后刷新
-  const handleQuickAdd = async () => {
-    if (!nextQuickDate || quickAdding) return
-    setQuickAdding(true)
-    try {
-      await saveNewDate(localDateString(nextQuickDate))
-    } finally {
-      setQuickAdding(false)
-    }
-  }
 
   // 添加日期弹窗：按 Esc 关闭
   useEffect(() => {
@@ -350,9 +335,10 @@ export default function HomePage() {
   const nearBudget = showBudgetPanel && !!budget?.amount && budget.amount > 0 && budgetPct >= 80 && !overBudget
   const remaining = (budget?.amount || 0) - expenseTotal
 
-  // 预算加载后同步到内联文本框
+  // 预算加载后同步到内联文本框 + 记录已保存金额（用于识别原生上下箭头点击）
   useEffect(() => {
     setBudgetDraft(budget?.amount ? budget.amount.toFixed(0) : '')
+    lastCommittedRef.current = budget?.amount ?? 0
   }, [budget])
 
   // 内联文本框保存预算（回车、失焦、或点上下箭头时触发）
@@ -365,32 +351,28 @@ export default function HomePage() {
       return
     }
     if (num === 0) {
-      // 0 视为未设置：不保存，回到未设置状态
-      setBudgetDraft('')
+      // 0 视为未设置：删除当月预算记录，回到未设置状态
+      try {
+        await deleteBudget(budgetMonth)
+        lastCommittedRef.current = 0
+        setBudgetDraft('')
+        refreshBudget()
+      } catch (err) {
+        alert('预算保存失败：' + String(err))
+      }
       return
     }
     try {
       await setBudget(budgetMonth, Math.round(num * 100) / 100)
+      lastCommittedRef.current = num
       refreshBudget()
     } catch (err) {
       alert('预算保存失败：' + String(err))
     }
   }
 
-  // 原生 number 输入框：点上下箭头（鼠标松开时）会触发原生 change 事件，
-  // 此时立即保存，无需再按回车/失焦；打字仍走回车/失焦保存。用 ref 保证
-  // 监听器只绑定一次，内部始终调用最新的 commitBudget。
-  const commitBudgetRef = useRef(commitBudget)
-  commitBudgetRef.current = commitBudget
-  useEffect(() => {
-    const el = budgetInputRef.current
-    if (!el) return
-    const handleNativeChange = (e: Event) => {
-      commitBudgetRef.current((e.target as HTMLInputElement).value)
-    }
-    el.addEventListener('change', handleNativeChange)
-    return () => el.removeEventListener('change', handleNativeChange)
-  }, [])
+  // 原生上下箭头的点击已由输入框 onChange 里的「整步跳变检测」（±1000）立即保存，
+  // 不再单独监听 change 事件；打字逐字符变化仍走回车/失焦保存。
 
   // 导出（导出全部记录，与时间范围无关）
   const handleExport = async () => {
@@ -540,17 +522,26 @@ export default function HomePage() {
                   <span className="font-semibold tabular-nums">{recordCount}</span>
                 </div>
 
-                {/* 预算：占 1/4（近一周/近一月无预算月份，显示 -；其余模式原生上下箭头 ±1000，点箭头松手即保存） */}
+                {/* 预算：占 1/4（近一周/近一月无预算月份，显示 -；其余模式原生上下箭头 ±1000，点箭头即保存） */}
                 <div className="w-1/4 shrink-0 flex items-center gap-1 whitespace-nowrap">
                   <span className="opacity-80">预算：</span>
                   {showBudgetPanel ? (
                     <input
-                      ref={budgetInputRef}
                       type="number"
                       min="0"
                       step={1000}
                       value={budgetDraft}
-                      onChange={(e) => setBudgetDraft(e.target.value)}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setBudgetDraft(v)
+                        // 点原生上下箭头：值按 step 整步跳变（±1000），立即保存；
+                        // 打字逐字符变化不会整步跳变，仍由回车/失焦保存。
+                        const num = parseFloat(v)
+                        const last = lastCommittedRef.current
+                        if (!isNaN(num) && (num === last + 1000 || num === last - 1000)) {
+                          commitBudget(v)
+                        }
+                      }}
                       onBlur={(e) => commitBudget(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') e.currentTarget.blur()
@@ -637,32 +628,14 @@ export default function HomePage() {
             <div className="text-center py-16 text-slate-400 text-sm">加载中...</div>
           ) : (
             <div className="space-y-4">
-              {/* 快捷添加「下一天」按钮（仅本月、未筛选支付方式、未筛选分类、且最大日期未到月末时才显示） */}
-              {!paymentFilter && !hasCategoryFilter && nextQuickDate && (
-                <button
-                  onClick={handleQuickAdd}
-                  disabled={quickAdding}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-primary/40 text-primary hover:bg-primary/5 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="添加下一天"
-                >
-                  {quickAdding ? (
-                    <span>正在添加…</span>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                      </svg>
-                      <span>添加 {format(nextQuickDate, 'yyyy/MM/dd')}（下一天）</span>
-                    </>
-                  )}
-                </button>
-              )}
               <ExpenseList
                 expenses={filteredExpenses}
                 onDelete={handleDelete}
                 onUpdate={handleUpdate}
                 onRefresh={loadData}
                 extraDates={addedDates}
+                missingDates={missingDates}
+                onAddDate={saveNewDate}
                 onDeleteDate={handleDeleteDate}
                 onDeleteCategory={handleDeleteCategory}
                 hasFilter={!!paymentFilter || hasCategoryFilter}

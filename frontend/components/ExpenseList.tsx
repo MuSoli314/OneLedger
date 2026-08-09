@@ -6,6 +6,7 @@ import { evaluateExpression } from '../data/calcUtils'
 import { useCategories } from '../contexts/CategoryContext'
 import type { Expense, TransactionType } from '../data/types'
 import { format } from 'date-fns'
+import { localDateString, addDays } from '../data/dateUtils'
 
 interface Props {
   expenses: Expense[]
@@ -13,6 +14,10 @@ interface Props {
   onUpdate: (id: number, category_l2: string, note: string, amount: number, payment_method: string, type: TransactionType) => Promise<void>
   onRefresh?: () => void
   extraDates?: string[]
+  /** 整月视图下缺失记录的日期（本月/上月/历史月份）— 列表里为这些日期补「+ 添加」快捷行 */
+  missingDates?: string[]
+  /** 点击「+ 添加」快捷行时回调（新增该缺失日期，行为与「添加日期」弹窗一致） */
+  onAddDate?: (date: string) => void
   onDeleteDate?: (date: string) => void
   onDeleteCategory?: (date: string, category_l1: string) => void
   // 是否正在筛选（支付方式/分类），仅影响空状态文案
@@ -50,7 +55,7 @@ function getWeekday(dateStr: string): string {
   }
 }
 
-export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, extraDates, onDeleteDate, onDeleteCategory, hasFilter }: Props) {
+export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, extraDates, missingDates, onAddDate, onDeleteDate, onDeleteCategory, hasFilter }: Props) {
   const { categories, addSubCategory, addCategory } = useCategories()
   const { paymentMethods, txTypes, defaultExpenseCode } = useSettings()
   const [collapsedMap, setCollapsedMap] = useState<Set<string>>(new Set())
@@ -413,7 +418,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
     setEditForm({ category_l2: '', note: '', amount: '0', payment_method: '', type: defaultExpenseCode || 'expense' })
   }
 
-  if (expenses.length === 0 && localRows.length === 0 && (!extraDates || extraDates.length === 0)) {
+  if (expenses.length === 0 && localRows.length === 0 && (!extraDates || extraDates.length === 0) && (!missingDates || missingDates.length === 0)) {
     return (
       <div className="text-center py-20">
         <div className="text-6xl mb-4">{hasFilter ? '🔍' : '📝'}</div>
@@ -457,12 +462,31 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
     if (!groupedByDate[d]) groupedByDate[d] = []
   }
 
+  // ===== 缺失日期快捷行 =====
+  // 整月视图（本月/上月/历史月份）下缺失记录的日期，为其中「挨着已有记录 ±1 天」或「每月 1 号」的补「+ 添加」快捷行。
+  // 已有日期集合 = 真实记录 + 本地临时行 + 手动添加的空白日期（groupedByDate 的所有键）
+  const presentSet = new Set(Object.keys(groupedByDate))
+  // 缺失日期里，排除已是空白日期（extraDates 已单独渲染成日期分组）的，避免重复
+  const quickRows: string[] = (missingDates || []).filter((d) => {
+    if (presentSet.has(d)) return false // 已有分组（真实/空白日期）不重复补快捷
+    if (d.endsWith('-01')) return true // 每月 1 号固定补
+    const prev = localDateString(addDays(new Date(`${d}T00:00:00`), -1))
+    const next = localDateString(addDays(new Date(`${d}T00:00:00`), 1))
+    return presentSet.has(prev) || presentSet.has(next)
+  }).sort((a, b) => b.localeCompare(a))
+  const quickSet = new Set(quickRows)
+  // 只把需要补快捷行的缺失日期并入分组，参与倒序排序与渲染；其余缺失日期不渲染
+  for (const d of quickRows) {
+    if (!groupedByDate[d]) groupedByDate[d] = []
+  }
+
   return (
     <div className="space-y-4">
       {Object.entries(groupedByDate)
         // 按日期倒序排列（本地临时行/手动添加的日期也要参与排序）
         .sort(([a], [b]) => b.localeCompare(a))
         .map(([date, items]) => {
+        const isQuickRow = quickSet.has(date)
         const dayTotal = items.reduce((sum, e) => sum + (txTypeByCode.get(e.type)?.category === 'ignore' ? 0 : e.amount), 0)
 
         // 在该日内按一级分类分组
@@ -476,7 +500,21 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
 
         return (
           <div key={date}>
-            {/* 日期标题 + 每日小计 + 添加按钮 — 整行可点击展开/折叠 */}
+            {/* 缺失日期：只显示「+ 添加」快捷行（挨着已有日期或每月 1 号），不显示日期标题 */}
+            {isQuickRow && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onAddDate?.(date) }}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-dashed border-primary/40 text-primary hover:bg-primary/5 transition-colors text-sm"
+                title="添加此日期"
+              >
+                <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                <span>添加 {formatDate(date)}</span>
+              </button>
+            )}
+            {/* 日期标题 + 每日小计 + 添加按钮 — 整行可点击展开/折叠（缺失日期不显示标题） */}
+            {!isQuickRow && (
             <div
               onClick={() => toggleDateCollapse(date)}
               className="flex items-center justify-between mb-2 px-0.5 cursor-pointer"
@@ -685,9 +723,10 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                 )}
               </div>
             </div>
+            )}
 
             {/* 该日记录 — 按大类分组表格 */}
-            {expandedDates.has(date) && (
+            {!isQuickRow && expandedDates.has(date) && (
             <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
               {Object.entries(groupedByL1).length === 0 ? (
                 <div className="px-4 py-6 text-center text-slate-300 text-xs">

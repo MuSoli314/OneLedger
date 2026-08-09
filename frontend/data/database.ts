@@ -323,6 +323,12 @@ export async function setBudget(month: string, amount: number): Promise<void> {
   }
 }
 
+// 删除某月预算记录（预算置为未设置）
+export async function deleteBudget(month: string): Promise<void> {
+  const database = await getDb()
+  await database.execute('DELETE FROM budgets WHERE month=$1', [month])
+}
+
 // ========== 数据导出 ==========
 
 // CSV 字段转义：含逗号/引号/换行的字段用双引号包裹，内部引号双写
