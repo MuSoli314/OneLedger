@@ -419,14 +419,14 @@ function SortableSubCategoryRow({
               }`}
               onClick={(e) => { e.stopPropagation(); onStartEdit('defaultAmount') }}
             >
-              {sub.defaultAmount > 0
+              {sub.defaultAmount >= 0
                 ? `${sub.defaultType === 'income' ? '+' : sub.defaultType === 'ignore' ? '' : '-'}¥${sub.defaultAmount.toFixed(2)}`
                 : ''
               }
             </span>
             {sub.defaultPaymentMethod ? (
               <span
-                className="inline-flex items-center gap-0.5 text-sm text-slate-400 bg-slate-100 px-2 py-1 rounded-full flex-shrink-0"
+                className="inline-flex items-center gap-0.5 w-[90px] flex-shrink-0 text-sm text-slate-400 bg-slate-100 px-2 py-1 rounded-full overflow-hidden whitespace-nowrap"
                 onClick={(e) => { e.stopPropagation(); onStartEdit('defaultPaymentMethod') }}
               >
                 {(() => {
@@ -442,7 +442,7 @@ function SortableSubCategoryRow({
               />
             )}
             <span
-              className={`inline-flex items-center gap-1 text-sm px-2 py-1 rounded-full flex-shrink-0 ${
+              className={`inline-flex items-center gap-1 w-[80px] flex-shrink-0 text-sm px-2 py-1 rounded-full overflow-hidden whitespace-nowrap ${
                 sub.defaultType === 'income'
                   ? 'text-emerald-600 bg-emerald-50'
                   : sub.defaultType === 'ignore'
@@ -544,9 +544,15 @@ export default function CategoryManager() {
   // 保存小类编辑（名称 + 默认值）
   const doSaveSub = useCallback(async (id: number, form: typeof subEditForm) => {
     if (id === -1 && pendingAddCatId !== null) {
-      // 新增小类
+      // 新增小类：支付方式/收支类型必填（表单已默认第一项，这里再兜底取第一项）
       if (form.subName.trim()) {
-        await addSubCategory(pendingAddCatId, form.subName.trim())
+        const newId = await addSubCategory(pendingAddCatId, form.subName.trim())
+        await updateSubCategoryDefaults(newId, {
+          defaultNote: form.defaultNote,
+          defaultPaymentMethod: form.defaultPaymentMethod || paymentMethods[0]?.name || '',
+          defaultAmount: evaluateExpression(form.defaultAmount) || 0,
+          defaultType: form.defaultType || txTypes[0]?.code || 'expense',
+        })
       }
       setPendingAddCatId(null)
     } else if (id > 0) {
@@ -567,7 +573,7 @@ export default function CategoryManager() {
       setEditingSubId(null)
       setFocusField(null)
     }
-  }, [pendingAddCatId, addSubCategory, updateSubCategoryName, updateSubCategoryDefaults])
+  }, [pendingAddCatId, addSubCategory, updateSubCategoryName, updateSubCategoryDefaults, paymentMethods, txTypes])
 
   // 点击行外自动保存
   useEffect(() => {
@@ -653,7 +659,14 @@ export default function CategoryManager() {
     setPendingAddCatId(catId)
     setEditingSubId(-1)
     setFocusField(null)
-    setSubEditForm({ subName: '', defaultNote: '', defaultPaymentMethod: '', defaultAmount: '', defaultType: 'expense' })
+    // 支付方式/收支类型必填：默认取第一项
+    setSubEditForm({
+      subName: '',
+      defaultNote: '',
+      defaultPaymentMethod: paymentMethods[0]?.name ?? '',
+      defaultAmount: '',
+      defaultType: txTypes[0]?.code ?? 'expense',
+    })
   }
 
   const handleSubEditKeyDown = (e: React.KeyboardEvent) => {
