@@ -46,7 +46,7 @@ function getWeekday(dateStr: string): string {
 }
 
 export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, extraDates, onDeleteDate, onDeleteCategory, hasFilter }: Props) {
-  const { categories, addSubCategory } = useCategories()
+  const { categories, addSubCategory, addCategory } = useCategories()
   const { paymentMethods, txTypes, defaultExpenseCode } = useSettings()
   const [collapsedMap, setCollapsedMap] = useState<Set<string>>(new Set())
   // 日期折叠 — 默认全部折叠（空 Set = 没有展开的日期）
@@ -88,6 +88,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
   const [addingDate, setAddingDate] = useState<string | null>(null)
   const [hoverL1, setHoverL1] = useState<string | null>(null)
   const [customizingL1, setCustomizingL1] = useState<string | null>(null)
+  const [customizingCategory, setCustomizingCategory] = useState(false)
   const [customName, setCustomName] = useState('')
   const [localRows, setLocalRows] = useState<LocalRow[]>([])
   const addBtnRef = useRef<HTMLDivElement>(null)
@@ -324,6 +325,27 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
     setTimeout(() => handleAddSubCategoryDirect(date, l1, name, resolvedSub), 0)
   }
 
+  // 自定义大类：自动保存为正式大类（重名直接复用），再悬停到它以便继续添加小类
+  const handleCustomCategorySubmit = async () => {
+    const name = customName.trim()
+    if (!name) {
+      setCustomizingCategory(false)
+      return
+    }
+    // 已存在同名大类 → 直接复用，不重复创建
+    if (!categories.some((c) => c.name === name)) {
+      try {
+        await addCategory(name, '📂')
+      } catch (err) {
+        console.error('添加自定义大类失败:', err)
+      }
+    }
+    setCustomName('')
+    setCustomizingCategory(false)
+    setHoverL1(name)
+    setCustomizingL1(null)
+  }
+
   // 添加本地临时小类行
   const handleAddSubCategory = (date: string, l1: string) => {
     const id = nextTempId.current--
@@ -490,7 +512,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                 {/* 添加大类按钮 */}
                 <div className="relative" ref={addingDate === date ? addBtnRef : undefined}>
                   <button
-                    onClick={(e) => { e.stopPropagation(); setAddingDate(addingDate === date ? null : date); setHoverL1(null); setCustomizingL1(null); setCustomName('') }}
+                    onClick={(e) => { e.stopPropagation(); setAddingDate(addingDate === date ? null : date); setHoverL1(null); setCustomizingL1(null); setCustomizingCategory(false); setCustomName('') }}
                     className="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-primary/10 text-slate-400 hover:text-primary transition-colors"
                     title="添加消费大类"
                   >
@@ -504,6 +526,30 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                     <div className="absolute right-0 top-full mt-1 z-30 flex bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden">
                       {/* 左列：大类列表 */}
                       <div className="w-40 max-h-72 overflow-y-auto py-1">
+                        {customizingCategory ? (
+                          <input
+                            autoFocus
+                            value={customName}
+                            onChange={(e) => setCustomName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleCustomCategorySubmit()
+                              if (e.key === 'Escape') { setCustomizingCategory(false); setCustomName('') }
+                            }}
+                            onBlur={() => { setCustomizingCategory(false); setCustomName('') }}
+                            placeholder="输入大类名，回车确认"
+                            className="w-full h-7 my-0.5 px-2 border border-primary rounded-lg text-sm bg-white focus:outline-none"
+                          />
+                        ) : (
+                          <button
+                            onClick={() => { setCustomizingCategory(true); setCustomName('') }}
+                            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-primary hover:bg-primary/10 transition-colors"
+                          >
+                            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                            </svg>
+                            <span>自定义</span>
+                          </button>
+                        )}
                         {categories.map((cat) => {
                           const disabled = existingL1s.has(cat.name)
                           return (
@@ -511,7 +557,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                               key={cat.name}
                               disabled={disabled}
                               onMouseEnter={() => !disabled && setHoverL1(cat.name)}
-                              className={`w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors ${
+                              className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm transition-colors ${
                                 disabled
                                   ? 'text-slate-300 cursor-not-allowed'
                                   : hoverL1 === cat.name
@@ -528,7 +574,9 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                       </div>
                       {/* 右列：当前悬停大类的小类 */}
                       <div className="w-40 max-h-72 overflow-y-auto py-1 border-l border-slate-100 bg-slate-50/50">
-                        {hoverL1 ? (
+                        {customizingCategory ? (
+                          <div className="px-3 py-1.5 text-sm text-slate-400">确认大类后继续选择小类</div>
+                        ) : hoverL1 ? (
                           customizingL1 === hoverL1 ? (
                             <input
                               autoFocus
@@ -540,12 +588,12 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                               }}
                               onBlur={() => { setCustomizingL1(null); setCustomName('') }}
                               placeholder="输入小类名，回车确认"
-                              className="w-full h-8 my-1 px-2 border border-primary rounded-lg text-sm bg-white focus:outline-none"
+                              className="w-full h-7 my-0.5 px-2 border border-primary rounded-lg text-sm bg-white focus:outline-none"
                             />
                           ) : (
                             <button
                               onClick={() => { setCustomizingL1(hoverL1); setCustomName('') }}
-                              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-primary hover:bg-primary/10 transition-colors"
+                              className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-primary hover:bg-primary/10 transition-colors"
                             >
                               <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -560,14 +608,14 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                               <button
                                 key={sc}
                                 onClick={() => handleAddSubCategoryDirect(date, hoverL1, sc)}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-700 hover:bg-primary/10 hover:text-primary transition-colors"
+                                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-primary/10 hover:text-primary transition-colors"
                               >
                                 <span className="w-1.5 h-1.5 rounded-full bg-slate-300 flex-shrink-0" />
                                 <span>{sc}</span>
                               </button>
                             ))
                           ) : (
-                            <div className="px-3 py-2 text-sm text-slate-400">暂无小类</div>
+                            <div className="px-3 py-1.5 text-sm text-slate-400">暂无小类</div>
                           )
                         )}
                       </div>
