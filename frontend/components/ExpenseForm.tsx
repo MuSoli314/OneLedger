@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import CategoryPicker from './CategoryPicker'
 import DatePicker from './DatePicker'
 import { addExpense, updateExpense } from '../data/database'
-import { PAYMENT_METHODS, TRANSACTION_TYPES } from '../data/categories'
+import { useSettings } from '../contexts/SettingsContext'
 import { localDateString } from '../data/dateUtils'
 import type { Expense, ExpenseInput, TransactionType } from '../data/types'
 
@@ -14,7 +14,8 @@ interface Props {
 }
 
 export default function ExpenseForm({ editExpense, defaultDate, onSuccess, onCancel }: Props) {
-  const [txType, setTxType] = useState<TransactionType>('expense')
+  const { paymentMethods, txTypes, defaultExpenseCode } = useSettings()
+  const [txType, setTxType] = useState<TransactionType>('')
   const [amount, setAmount] = useState('')
   const [category, setCategory] = useState({ l1: '', l2: '' })
   const [date, setDate] = useState(defaultDate || localDateString())
@@ -33,6 +34,11 @@ export default function ExpenseForm({ editExpense, defaultDate, onSuccess, onCan
       setPaymentMethod(editExpense.payment_method || '')
     }
   }, [editExpense])
+
+  // 类型加载后：若当前未选（新记录），回退到默认支出类型
+  useEffect(() => {
+    if (!txType && txTypes.length > 0) setTxType(defaultExpenseCode)
+  }, [txType, txTypes, defaultExpenseCode])
 
   // 按 Esc 关闭弹窗
   useEffect(() => {
@@ -67,7 +73,7 @@ export default function ExpenseForm({ editExpense, defaultDate, onSuccess, onCan
       date,
       note: note.trim(),
       payment_method: paymentMethod,
-      type: txType,
+      type: txType || defaultExpenseCode || 'expense',
     }
 
     setLoading(true)
@@ -102,16 +108,16 @@ export default function ExpenseForm({ editExpense, defaultDate, onSuccess, onCan
         <div className="mb-4">
           <label className="block text-base text-slate-500 mb-1.5">收支类型</label>
           <div className="flex gap-2">
-            {TRANSACTION_TYPES.map((t) => (
+            {txTypes.map((t) => (
               <button
-                key={t.value}
+                key={t.code}
                 type="button"
-                onClick={() => setTxType(t.value)}
+                onClick={() => setTxType(t.code === txType ? '' : t.code)}
                 className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm border transition-all ${
-                  txType === t.value
-                    ? t.value === 'expense'
+                  txType === t.code
+                    ? t.category === 'expense'
                       ? 'border-red-400 bg-red-50 text-red-600 font-medium'
-                      : t.value === 'income'
+                      : t.category === 'income'
                       ? 'border-emerald-400 bg-emerald-50 text-emerald-600 font-medium'
                       : 'border-slate-300 bg-slate-100 text-slate-600 font-medium'
                     : 'border-slate-200 text-slate-500 hover:border-slate-300'
@@ -158,7 +164,7 @@ export default function ExpenseForm({ editExpense, defaultDate, onSuccess, onCan
         <div className="mb-4">
           <label className="block text-base text-slate-500 mb-1.5">支付方式</label>
           <div className="flex gap-2 flex-wrap">
-            {PAYMENT_METHODS.map((pm) => (
+            {paymentMethods.map((pm) => (
               <button
                 key={pm.name}
                 type="button"
