@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useCategories } from '../contexts/CategoryContext'
-import { PAYMENT_METHODS, TRANSACTION_TYPES } from '../data/categories'
+import { useSettings } from '../contexts/SettingsContext'
 import type { TransactionType } from '../data/types'
+import { EMOJI_LIST } from '../data/emojis'
 import ConfirmDialog from '../components/ConfirmDialog'
 import {
   DndContext,
@@ -20,12 +21,6 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-
-const EMOJI_LIST = [
-  '🍜', '🚗', '🛒', '🏠', '🎮', '🏥', '📚', '🎁', '📱', '💰', '📦',
-  '🍔', '☕', '🎬', '✈️', '💊', '🐱', '🎂', '💻', '👕', '💄', '🏋️',
-  '🎵', '🎨', '🌿', '🔧', '📷', '🎪', '⚽', '🎸', '🚌', '🛵',
-]
 
 const EMOJI_PER_PAGE = 12
 
@@ -259,6 +254,7 @@ function SortableSubCategoryRow({
   onDelete: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const { paymentMethods, txTypes } = useSettings()
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -339,7 +335,7 @@ function SortableSubCategoryRow({
               onClick={(e) => e.stopPropagation()}
             >
               <option value="">支付方式</option>
-              {PAYMENT_METHODS.map((pm) => (
+              {paymentMethods.map((pm) => (
                 <option key={pm.name} value={pm.name}>{pm.icon} {pm.name}</option>
               ))}
             </select>
@@ -349,8 +345,8 @@ function SortableSubCategoryRow({
               className="w-[80px] text-xs border border-slate-200 rounded-lg px-1.5 py-1.5 bg-white focus:outline-none focus:border-primary text-slate-600"
               onClick={(e) => e.stopPropagation()}
             >
-              {TRANSACTION_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>{t.icon} {t.name}</option>
+              {txTypes.map((t) => (
+                <option key={t.code} value={t.code}>{t.icon} {t.name}</option>
               ))}
             </select>
             <div className="flex-1 min-w-0">
@@ -378,7 +374,7 @@ function SortableSubCategoryRow({
             {sub.defaultPaymentMethod ? (
               <span className="inline-flex items-center gap-0.5 text-xs text-slate-400 bg-slate-100 px-2 py-1 rounded-full flex-shrink-0">
                 {(() => {
-                  const pm = PAYMENT_METHODS.find((p) => p.name === sub.defaultPaymentMethod)
+                  const pm = paymentMethods.find((p) => p.name === sub.defaultPaymentMethod)
                   return pm ? pm.icon : ''
                 })()}
                 {sub.defaultPaymentMethod}
@@ -438,6 +434,8 @@ export default function CategoryManager() {
     reorderCategories,
     reorderSubCategories,
   } = useCategories()
+
+  const { paymentMethods, txTypes } = useSettings()
 
   // 展开/折叠状态 — 默认全部折叠
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
@@ -791,7 +789,7 @@ export default function CategoryManager() {
                               onClick={(e) => e.stopPropagation()}
                             >
                               <option value="">支付方式</option>
-                              {PAYMENT_METHODS.map((pm) => (
+                              {paymentMethods.map((pm) => (
                                 <option key={pm.name} value={pm.name}>{pm.icon} {pm.name}</option>
                               ))}
                             </select>
@@ -801,8 +799,8 @@ export default function CategoryManager() {
                               className="w-[80px] text-xs border border-slate-200 rounded-lg px-1.5 py-1.5 bg-white focus:outline-none focus:border-primary text-slate-600"
                               onClick={(e) => e.stopPropagation()}
                             >
-                              {TRANSACTION_TYPES.map((t) => (
-                                <option key={t.value} value={t.value}>{t.icon} {t.name}</option>
+                              {txTypes.map((t) => (
+                                <option key={t.code} value={t.code}>{t.icon} {t.name}</option>
                               ))}
                             </select>
                             <div className="flex-1 min-w-0">
