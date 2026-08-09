@@ -1,6 +1,6 @@
 import Database from '@tauri-apps/plugin-sql'
-import type { Expense, ExpenseInput, Budget, TrendPoint, CategoryWithChildren, TransactionType, DailyTrendPoint, MonthlyStats } from './types'
-import { categories as defaultCategories } from './categories'
+import type { Expense, ExpenseInput, Budget, TrendPoint, CategoryWithChildren, TransactionType, DailyTrendPoint, MonthlyStats, PaymentMethodConfig, TxTypeConfig, TxCategory } from './types'
+import { categories as defaultCategories, DEFAULT_PAYMENT_METHODS, DEFAULT_TX_TYPES } from './categories'
 
 // 分类筛选的组合键分隔符（小类名在不同大类下可能重名，故用「大类+小类」作唯一键）
 // HomePage / StatsPanel / database 共用此函数，保证键格式一致
@@ -81,6 +81,37 @@ async function connectDb(retries = 2): Promise<Database> {
       await conn.execute(
         'CREATE TABLE IF NOT EXISTS budgets (id INTEGER PRIMARY KEY AUTOINCREMENT, month TEXT NOT NULL UNIQUE, amount REAL NOT NULL DEFAULT 0)'
       )
+
+      // 支付方式表（记录里存的是 name，改名时同步迁移历史记录）
+      await conn.execute(
+        'CREATE TABLE IF NOT EXISTS payment_methods (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, icon TEXT NOT NULL DEFAULT "💳", sort_order INTEGER NOT NULL DEFAULT 0)'
+      )
+      // 收支类型表（记录里存的是 code，改名无需迁移）
+      await conn.execute(
+        'CREATE TABLE IF NOT EXISTS tx_types (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, icon TEXT NOT NULL DEFAULT "💰", category TEXT NOT NULL DEFAULT "expense", sort_order INTEGER NOT NULL DEFAULT 0)'
+      )
+
+      // 播种默认支付方式
+      const pmCount = await conn.select<{ cnt: number }[]>('SELECT COUNT(*) as cnt FROM payment_methods')
+      if (pmCount[0]?.cnt === 0) {
+        for (let i = 0; i < DEFAULT_PAYMENT_METHODS.length; i++) {
+          await conn.execute(
+            'INSERT INTO payment_methods (name, icon, sort_order) VALUES ($1, $2, $3)',
+            [DEFAULT_PAYMENT_METHODS[i].name, DEFAULT_PAYMENT_METHODS[i].icon, i]
+          )
+        }
+      }
+
+      // 播种默认收支类型
+      const ttCount = await conn.select<{ cnt: number }[]>('SELECT COUNT(*) as cnt FROM tx_types')
+      if (ttCount[0]?.cnt === 0) {
+        for (let i = 0; i < DEFAULT_TX_TYPES.length; i++) {
+          await conn.execute(
+            'INSERT INTO tx_types (code, name, icon, category, sort_order) VALUES ($1, $2, $3, $4, $5)',
+            [DEFAULT_TX_TYPES[i].value, DEFAULT_TX_TYPES[i].name, DEFAULT_TX_TYPES[i].icon, DEFAULT_TX_TYPES[i].category, i]
+          )
+        }
+      }
       db = conn
       return conn
     } catch (err) {
@@ -441,4 +472,132 @@ export async function reorderSubCategories(orderedIds: number[]): Promise<void> 
   for (let i = 0; i < orderedIds.length; i++) {
     await database.execute('UPDATE subcategories SET sort_order=$1 WHERE id=$2', [i, orderedIds[i]])
   }
+}
+
+// ========== 支付方式配置 ==========
+
+// 获取所有支付方式
+export async function getPaymentMethods(): Promise<PaymentMethodConfig[]> {
+  const database = await getDb()
+  return database.select<PaymentMethodConfig[]>(
+    'SELECT id, name, icon FROM payment_methods ORDER BY sort_order ASC, id ASC'
+  )
+}
+
+// 新增支付方式
+export async function addPaymentMethod(name: string, icon: string): Promise<void> {
+  const database = await getDb()
+  await database.execute(
+    'INSERT INTO payment_methods (name, icon, sort_order) VALUES ($1, $2, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM payment_methods))',
+    [name, icon]
+  )
+}
+
+// 删除支付方式（允许强删；历史记录保留原名称文本）
+export async function deletePaymentMethod(id: number): Promise<void> {
+  const database = await getDb()
+  await database.execute('DELETE FROM payment_methods WHERE id=$1', [id])
+}
+
+// 改名：同步迁移历史记录与小类默认模板里的旧名称
+export async function updatePaymentMethodName(id: number, name: string): Promise<void> {
+  const database = await getDb()
+  const rows = await database.select<{ name: string }[]>(
+    'SELECT name FROM payment_methods WHERE id=$1',
+    [id]
+  )
+  const oldName = rows[0]?.name
+  await database.execute('UPDATE payment_methods SET name=$1 WHERE id=$2', [name, id])
+  if (oldName && oldName !== name) {
+    await database.execute('UPDATE expenses SET payment_method=$1 WHERE payment_method=$2', [name, oldName])
+    await database.execute('UPDATE subcategories SET default_payment_method=$1 WHERE default_payment_method=$2', [name, oldName])
+  }
+}
+
+// 改图标
+export async function updatePaymentMethodIcon(id: number, icon: string): Promise<void> {
+  const database = await getDb()
+  await database.execute('UPDATE payment_methods SET icon=$1 WHERE id=$2', [icon, id])
+}
+
+// 拖拽后批量更新顺序
+export async function reorderPaymentMethods(orderedIds: number[]): Promise<void> {
+  const database = await getDb()
+  for (let i = 0; i < orderedIds.length; i++) {
+    await database.execute('UPDATE payment_methods SET sort_order=$1 WHERE id=$2', [i, orderedIds[i]])
+  }
+}
+
+// 某支付方式的在用笔数（删除确认弹窗提示用）
+export async function countExpensesByPaymentMethod(name: string): Promise<number> {
+  const database = await getDb()
+  const rows = await database.select<{ cnt: number }[]>(
+    'SELECT COUNT(*) as cnt FROM expenses WHERE payment_method=$1',
+    [name]
+  )
+  return rows[0]?.cnt ?? 0
+}
+
+// ========== 收支类型配置 ==========
+
+// 获取所有收支类型（category 字段来自数据库，做白名单收窄）
+export async function getTxTypes(): Promise<TxTypeConfig[]> {
+  const database = await getDb()
+  const rows = await database.select<{ id: number; code: string; name: string; icon: string; category: string }[]>(
+    'SELECT id, code, name, icon, category FROM tx_types ORDER BY sort_order ASC, id ASC'
+  )
+  return rows.map((r) => ({
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    icon: r.icon,
+    category: (['expense', 'income', 'ignore'].includes(r.category) ? r.category : 'ignore') as TxCategory,
+  }))
+}
+
+// 新增收支类型：code 先用空串插入拿 id，再回填 t_<id>
+export async function addTxType(name: string, icon: string, category: TxCategory): Promise<void> {
+  const database = await getDb()
+  const result = await database.execute(
+    'INSERT INTO tx_types (code, name, icon, category, sort_order) VALUES ($1, $2, $3, $4, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM tx_types))',
+    ['', name, icon, category]
+  )
+  const id = result.lastInsertId as number
+  await database.execute('UPDATE tx_types SET code=$1 WHERE id=$2', [`t_${id}`, id])
+}
+
+// 删除收支类型（允许强删；老记录 code 找不到配置 → 界面显示「未定义」）
+export async function deleteTxType(id: number): Promise<void> {
+  const database = await getDb()
+  await database.execute('DELETE FROM tx_types WHERE id=$1', [id])
+}
+
+// 改名（记录存 code，改名全局生效，无需迁移）
+export async function updateTxTypeName(id: number, name: string): Promise<void> {
+  const database = await getDb()
+  await database.execute('UPDATE tx_types SET name=$1 WHERE id=$2', [name, id])
+}
+
+// 改图标
+export async function updateTxTypeIcon(id: number, icon: string): Promise<void> {
+  const database = await getDb()
+  await database.execute('UPDATE tx_types SET icon=$1 WHERE id=$2', [icon, id])
+}
+
+// 拖拽后批量更新顺序
+export async function reorderTxTypes(orderedIds: number[]): Promise<void> {
+  const database = await getDb()
+  for (let i = 0; i < orderedIds.length; i++) {
+    await database.execute('UPDATE tx_types SET sort_order=$1 WHERE id=$2', [i, orderedIds[i]])
+  }
+}
+
+// 某收支类型的在用笔数（删除确认弹窗提示用）
+export async function countExpensesByType(code: string): Promise<number> {
+  const database = await getDb()
+  const rows = await database.select<{ cnt: number }[]>(
+    'SELECT COUNT(*) as cnt FROM expenses WHERE type=$1',
+    [code]
+  )
+  return rows[0]?.cnt ?? 0
 }
