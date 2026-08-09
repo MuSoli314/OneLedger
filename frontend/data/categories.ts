@@ -121,20 +121,24 @@ export const categories: Category[] = [
   },
 ]
 
-// 支付方式
-export const PAYMENT_METHODS = [
+// 支付方式（默认种子；正式数据在 payment_methods 表）
+export const DEFAULT_PAYMENT_METHODS = [
   { name: '微信', icon: '💬' },
   { name: '支付宝', icon: '🔵' },
   { name: '银行卡', icon: '💳' },
   { name: '美团月付', icon: '🟢' },
 ] as const
 
-// 收支类型
-export const TRANSACTION_TYPES = [
-  { name: '支出', value: 'expense', icon: '💸' },
-  { name: '收入', value: 'income', icon: '💰' },
-  { name: '不计', value: 'ignore', icon: '⏭️' },
+// 收支类型（默认种子；正式数据在 tx_types 表）。value 即记录里存的 code
+export const DEFAULT_TX_TYPES = [
+  { name: '支出', value: 'expense', icon: '💸', category: 'expense' },
+  { name: '收入', value: 'income', icon: '💰', category: 'income' },
+  { name: '不计', value: 'ignore', icon: '⏭️', category: 'ignore' },
 ] as const
+
+// 向后兼容别名（Context 兜底 / 种子数据源用）
+export const PAYMENT_METHODS = DEFAULT_PAYMENT_METHODS
+export const TRANSACTION_TYPES = DEFAULT_TX_TYPES
 
 // 找到所有二级分类的列表（用于下拉选择等）
 export function getAllSubCategories(): { l1: string; l2: string }[] {
