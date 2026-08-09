@@ -83,9 +83,9 @@ export default function HomePage() {
   // 当前时间范围的本地起止日期
   const range = useMemo(() => getRangeDates(rangeMode, historyMonth, customRange), [rangeMode, historyMonth, customRange])
 
-  // 预算在「本月 / 上月 / 历史月份」显示；自定义若起止同月也显示该月预算
-  const showBudgetPanel = rangeMode === 'month' || rangeMode === 'lastMonth' || rangeMode === 'history' || (rangeMode === 'custom' && customRange.start.slice(0, 7) === customRange.end.slice(0, 7))
-  const budgetMonth = rangeMode === 'history' ? historyMonth : rangeMode === 'lastMonth' ? localMonthString(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1)) : rangeMode === 'custom' ? customRange.start.slice(0, 7) : thisMonth
+  // 预算只在「本月 / 上月 / 历史月份」有数据；其余模式（近一周/近一月/自定义）显示 -
+  const showBudgetPanel = rangeMode === 'month' || rangeMode === 'lastMonth' || rangeMode === 'history'
+  const budgetMonth = rangeMode === 'history' ? historyMonth : rangeMode === 'lastMonth' ? localMonthString(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1)) : thisMonth
 
   // 卡片左上角标签 + 金额标签
   const rangeLabel =
@@ -542,21 +542,21 @@ export default function HomePage() {
             <div>
               <div className="flex items-center text-sm">
                 {/* 支出：占 1/4 */}
-                <div className={`shrink-0 flex items-center gap-1 whitespace-nowrap ${showBudgetPanel ? 'w-1/4' : 'w-1/2'}`}>
+                <div className="w-1/4 shrink-0 flex items-center gap-1 whitespace-nowrap">
                   <span className="opacity-80">支出：</span>
                   <span className="font-bold tabular-nums">¥{expenseTotal.toFixed(2)}</span>
                 </div>
 
                 {/* 笔数：占 1/4 */}
-                <div className={`shrink-0 flex items-center gap-1 whitespace-nowrap ${showBudgetPanel ? 'w-1/4' : 'w-1/2'}`}>
+                <div className="w-1/4 shrink-0 flex items-center gap-1 whitespace-nowrap">
                   <span className="opacity-80">笔数：</span>
                   <span className="font-semibold tabular-nums">{recordCount}</span>
                 </div>
 
-                {/* 预算：占 1/4（原生上下箭头 ±1000，点箭头松手即保存，无需回车） */}
-                {showBudgetPanel && (
-                  <div className="w-1/4 shrink-0 flex items-center gap-1 whitespace-nowrap">
-                    <span className="opacity-80">预算：</span>
+                {/* 预算：占 1/4（近一周/近一月无预算月份，显示 -；其余模式原生上下箭头 ±1000，点箭头松手即保存） */}
+                <div className="w-1/4 shrink-0 flex items-center gap-1 whitespace-nowrap">
+                  <span className="opacity-80">预算：</span>
+                  {showBudgetPanel ? (
                     <input
                       ref={budgetInputRef}
                       type="number"
@@ -580,24 +580,24 @@ export default function HomePage() {
                       placeholder="未设置"
                       className="w-16 bg-white/20 rounded-md px-1 py-0.5 font-semibold tabular-nums placeholder-white/50 focus:bg-white/30 focus:outline-none"
                     />
-                  </div>
-                )}
+                  ) : (
+                    <span className="w-16 text-center font-semibold tabular-nums">-</span>
+                  )}
+                </div>
 
                 {/* 剩余：占 1/4（未设置预算显示 -；接近/超出预算时底色变色提示） */}
-                {showBudgetPanel && (
-                  <div className="w-1/4 shrink-0 flex items-center gap-1 whitespace-nowrap">
-                    <span className="opacity-80">剩余：</span>
-                    <span className={`font-semibold tabular-nums rounded-md px-1.5 py-0.5 transition-colors ${
-                      overBudget
-                        ? 'bg-white text-red-600'
-                        : nearBudget
-                        ? 'bg-white text-amber-600'
-                        : 'bg-white/20'
-                    }`}>
-                      {budget?.amount && budget.amount > 0 ? `¥${remaining.toFixed(2)}` : '-'}
-                    </span>
-                  </div>
-                )}
+                <div className="w-1/4 shrink-0 flex items-center gap-1 whitespace-nowrap">
+                  <span className="opacity-80">剩余：</span>
+                  <span className={`font-semibold tabular-nums rounded-md px-1.5 py-0.5 transition-colors ${
+                    overBudget
+                      ? 'bg-white text-red-600'
+                      : nearBudget
+                      ? 'bg-white text-amber-600'
+                      : 'bg-white/20'
+                  }`}>
+                    {budget?.amount && budget.amount > 0 ? `¥${remaining.toFixed(2)}` : '-'}
+                  </span>
+                </div>
               </div>
 
               {/* 进度条（设置了预算才显示） */}

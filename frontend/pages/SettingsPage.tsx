@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useSettings } from '../contexts/SettingsContext'
 import { EMOJI_LIST } from '../data/emojis'
+import { IconPickerButton } from '../components/EmojiPicker'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { countExpensesByPaymentMethod, countExpensesByType } from '../data/database'
 import {
@@ -39,28 +40,6 @@ function DragHandle(props: React.HTMLAttributes<HTMLButtonElement>) {
         <circle cx="15" cy="19" r="1.5" />
       </svg>
     </button>
-  )
-}
-
-/** emoji 选择小弹窗 */
-function EmojiGrid({ current, onPick, onClose }: { current: string; onPick: (e: string) => void; onClose: () => void }) {
-  return (
-    <div className="absolute z-40 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg p-3">
-      <div className="grid grid-cols-6 gap-1">
-        {EMOJI_LIST.map((emoji) => (
-          <button
-            key={emoji}
-            onClick={() => onPick(emoji)}
-            className={`w-8 h-8 flex items-center justify-center rounded-lg text-base hover:bg-slate-100 transition-colors ${
-              current === emoji ? 'bg-primary/10 ring-1 ring-primary' : ''
-            }`}
-          >
-            {emoji}
-          </button>
-        ))}
-      </div>
-      <button onClick={onClose} className="mt-2 text-xs text-slate-400 hover:text-slate-600">关闭</button>
-    </div>
   )
 }
 
@@ -123,15 +102,10 @@ function SortablePaymentRow({
     opacity: isDragging ? 0.35 : undefined,
   }
   return (
-    <div ref={setNodeRef} style={style} className="bg-white rounded-xl border border-slate-100 shadow-sm flex items-center gap-2 px-4 py-3">
+    <div ref={setNodeRef} style={style} className="bg-white rounded-xl border border-slate-100 shadow-sm flex items-center gap-2 px-4 py-3 relative">
       <DragHandle {...attributes} {...listeners} />
       {/* 图标按钮（点开 emoji 选择） */}
-      <div className="relative flex-shrink-0">
-        <button onClick={onToggleIcon} className="w-10 h-10 flex items-center justify-center bg-slate-100 rounded-lg text-xl hover:bg-slate-200 transition-colors" title="修改图标">
-          {pm.icon}
-        </button>
-        {iconOpen && <EmojiGrid current={pm.icon} onPick={onPickEmoji} onClose={onCloseIcon} />}
-      </div>
+      <IconPickerButton icon={pm.icon} open={iconOpen} onToggle={onToggleIcon} onPick={onPickEmoji} onClose={onCloseIcon} />
       {/* 名称 */}
       {editing ? (
         <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -199,15 +173,10 @@ function SortableTxRow({
   }
   const badge = CATEGORY_BADGE[tt.category]
   return (
-    <div ref={setNodeRef} style={style} className="bg-white rounded-xl border border-slate-100 shadow-sm flex items-center gap-2 px-4 py-3">
+    <div ref={setNodeRef} style={style} className="bg-white rounded-xl border border-slate-100 shadow-sm flex items-center gap-2 px-4 py-3 relative">
       <DragHandle {...attributes} {...listeners} />
       {/* 图标按钮（点开 emoji 选择） */}
-      <div className="relative flex-shrink-0">
-        <button onClick={onToggleIcon} className="w-10 h-10 flex items-center justify-center bg-slate-100 rounded-lg text-xl hover:bg-slate-200 transition-colors" title="修改图标">
-          {tt.icon}
-        </button>
-        {iconOpen && <EmojiGrid current={tt.icon} onPick={onPickEmoji} onClose={onCloseIcon} />}
-      </div>
+      <IconPickerButton icon={tt.icon} open={iconOpen} onToggle={onToggleIcon} onPick={onPickEmoji} onClose={onCloseIcon} />
       {/* 名称 */}
       {editing ? (
         <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -236,7 +205,7 @@ function AddBlock({ title, children }: { title: string; children: React.ReactNod
   return (
     <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
       <h3 className="text-sm font-semibold text-slate-700 mb-3">{title}</h3>
-      <div className="flex items-end gap-2">{children}</div>
+      <div className="flex items-end gap-2 relative">{children}</div>
     </div>
   )
 }
@@ -423,6 +392,8 @@ export default function SettingsPage() {
     <div className="space-y-8">
       <h2 className="text-lg font-semibold text-slate-800">设置</h2>
 
+      {/* 支付方式 + 收支类型 左右两栏 */}
+      <div className="grid grid-cols-2 gap-6 items-start">
       {/* ===== 支付方式 ===== */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
@@ -463,12 +434,7 @@ export default function SettingsPage() {
         </DndContext>
 
         <AddBlock title="新增支付方式">
-          <div className="flex-shrink-0 relative">
-            <button onClick={() => setShowPmPicker(!showPmPicker)} className="w-10 h-10 flex items-center justify-center bg-slate-100 rounded-lg text-xl hover:bg-slate-200 transition-colors">
-              {newPmIcon}
-            </button>
-            {showPmPicker && <EmojiGrid current={newPmIcon} onPick={handlePickPmEmoji} onClose={() => setShowPmPicker(false)} />}
-          </div>
+          <IconPickerButton icon={newPmIcon} open={showPmPicker} onToggle={() => setShowPmPicker(!showPmPicker)} onPick={handlePickPmEmoji} onClose={() => setShowPmPicker(false)} />
           <input
             type="text"
             value={newPmName}
@@ -527,12 +493,7 @@ export default function SettingsPage() {
         </DndContext>
 
         <AddBlock title="新增收支类型">
-          <div className="flex-shrink-0 relative">
-            <button onClick={() => setShowTtPicker(!showTtPicker)} className="w-10 h-10 flex items-center justify-center bg-slate-100 rounded-lg text-xl hover:bg-slate-200 transition-colors">
-              {newTtIcon}
-            </button>
-            {showTtPicker && <EmojiGrid current={newTtIcon} onPick={handlePickTtEmoji} onClose={() => setShowTtPicker(false)} />}
-          </div>
+          <IconPickerButton icon={newTtIcon} open={showTtPicker} onToggle={() => setShowTtPicker(!showTtPicker)} onPick={handlePickTtEmoji} onClose={() => setShowTtPicker(false)} />
           <input
             type="text"
             value={newTtName}
@@ -558,6 +519,7 @@ export default function SettingsPage() {
             添加
           </button>
         </AddBlock>
+      </div>
       </div>
 
       {/* 删除确认弹窗 */}

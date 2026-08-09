@@ -3,6 +3,7 @@ import { useCategories } from '../contexts/CategoryContext'
 import { useSettings } from '../contexts/SettingsContext'
 import type { TransactionType } from '../data/types'
 import { EMOJI_LIST } from '../data/emojis'
+import { IconPickerButton, EmojiPickerGrid } from '../components/EmojiPicker'
 import ConfirmDialog from '../components/ConfirmDialog'
 import {
   DndContext,
@@ -21,8 +22,6 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-
-const EMOJI_PER_PAGE = 12
 
 /** 拖拽手柄图标（六点 grip） */
 function DragHandle(props: React.HTMLAttributes<HTMLButtonElement>) {
@@ -92,6 +91,23 @@ function SortableCategoryRow({
 
   const defaultCount = cat.children.filter((c) => c.isDefault).length
 
+  const iconBtnRef = useRef<HTMLButtonElement>(null)
+  const iconPanelRef = useRef<HTMLDivElement>(null)
+
+  // 点击图标选择区外部自动关闭
+  useEffect(() => {
+    if (iconPickerCatId !== cat.id) return
+    const handler = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (iconPanelRef.current && !iconPanelRef.current.contains(t)
+        && iconBtnRef.current && !iconBtnRef.current.contains(t)) {
+        onCloseIconPicker()
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [iconPickerCatId, cat.id, onCloseIconPicker])
+
   return (
     <div ref={setNodeRef} style={style} className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
       {/* 大类标题行 */}
@@ -133,6 +149,7 @@ function SortableCategoryRow({
         </button>
         <button
           onClick={onIconPicker}
+          ref={iconBtnRef}
           className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors flex-shrink-0"
           title="修改图标"
         >
@@ -200,27 +217,9 @@ function SortableCategoryRow({
 
       {/* 图标选择器弹出 */}
       {iconPickerCatId === cat.id && (
-        <div className="px-4 pb-3 border-t border-slate-50 pt-2">
+        <div ref={iconPanelRef} className="px-4 pb-3 border-t border-slate-50 pt-2">
           <div className="text-[11px] text-slate-400 mb-1.5">选择图标：</div>
-          <div className="grid grid-cols-8 gap-1">
-            {EMOJI_LIST.map((emoji) => (
-              <button
-                key={emoji}
-                onClick={() => onEmojiSelect(emoji)}
-                className={`w-8 h-8 flex items-center justify-center rounded-lg text-base hover:bg-slate-100 transition-colors ${
-                  cat.icon === emoji ? 'bg-primary/10 ring-1 ring-primary' : ''
-                }`}
-              >
-                {emoji}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={onCloseIconPicker}
-            className="mt-1 text-xs text-slate-400 hover:text-slate-600"
-          >
-            关闭
-          </button>
+          <EmojiPickerGrid current={cat.icon} onPick={onEmojiSelect} />
         </div>
       )}
     </div>
@@ -267,10 +266,12 @@ function SortableSubCategoryRow({
       ref={isEditing && editingSubId !== -1 ? subEditRef : setNodeRef}
       style={isEditing && editingSubId !== -1 ? undefined : style}
       onClick={onStartEdit}
-      className={`flex items-center gap-4 px-4 pl-2 py-3.5 text-base transition-colors border-b border-slate-50 ${
+      className={`flex items-center gap-2 px-2 pl-2 py-1 text-base transition-colors border-b border-slate-50 ${
         isEditing
-          ? 'bg-indigo-50/60 border-l-2 border-l-primary'
-          : `hover:bg-slate-50/50 cursor-pointer group${sub.defaultType === 'ignore' ? ' opacity-50' : ''}`
+          ? 'bg-indigo-50 border-l-2 border-l-primary'
+          : sub.defaultType === 'ignore'
+          ? 'bg-slate-300 hover:bg-slate-400 cursor-pointer group'
+          : 'hover:bg-slate-50 cursor-pointer group'
       }`}
     >
       {/* 拖拽手柄 */}
@@ -304,13 +305,13 @@ function SortableSubCategoryRow({
           value={subEditForm.subName}
           onChange={(e) => onSubEditFormChange({ ...subEditForm, subName: e.target.value })}
           placeholder="小类名称"
-          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 w-[110px] flex-shrink-0 bg-white focus:outline-none focus:border-primary text-slate-700"
+          className="text-xs border border-slate-200 rounded-lg px-2 h-8 w-[110px] flex-shrink-0 bg-white focus:outline-none focus:border-primary text-slate-700"
           onClick={(e) => e.stopPropagation()}
           onKeyDown={onSubEditKeyDown}
           autoFocus
         />
       ) : (
-        <span className="text-base font-medium text-slate-700 w-[110px] flex-shrink-0 truncate">{sub.name}</span>
+        <span className="text-sm font-medium text-slate-700 w-[110px] flex-shrink-0 truncate">{sub.name}</span>
       )}
 
       {/* 编辑区 */}
@@ -323,7 +324,7 @@ function SortableSubCategoryRow({
               value={subEditForm.defaultAmount}
               onChange={(e) => onSubEditFormChange({ ...subEditForm, defaultAmount: e.target.value })}
               placeholder="金额"
-              className="w-[90px] text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-primary text-right font-semibold tabular-nums"
+              className="w-[90px] text-xs border border-slate-200 rounded-lg px-2 h-8 bg-white focus:outline-none focus:border-primary text-right font-semibold tabular-nums"
               style={{ color: subEditForm.defaultType === 'income' ? '#10b981' : subEditForm.defaultType === 'ignore' ? '#94a3b8' : '#ef4444' }}
               onClick={(e) => e.stopPropagation()}
               onKeyDown={onSubEditKeyDown}
@@ -331,7 +332,7 @@ function SortableSubCategoryRow({
             <select
               value={subEditForm.defaultPaymentMethod}
               onChange={(e) => onSubEditFormChange({ ...subEditForm, defaultPaymentMethod: e.target.value })}
-              className="w-[90px] text-xs border border-slate-200 rounded-lg px-1.5 py-1.5 bg-white focus:outline-none focus:border-primary text-slate-500"
+              className="w-[90px] text-xs border border-slate-200 rounded-lg px-1.5 h-8 bg-white focus:outline-none focus:border-primary text-slate-500"
               onClick={(e) => e.stopPropagation()}
             >
               <option value="">支付方式</option>
@@ -342,7 +343,7 @@ function SortableSubCategoryRow({
             <select
               value={subEditForm.defaultType}
               onChange={(e) => onSubEditFormChange({ ...subEditForm, defaultType: e.target.value as TransactionType })}
-              className="w-[80px] text-xs border border-slate-200 rounded-lg px-1.5 py-1.5 bg-white focus:outline-none focus:border-primary text-slate-600"
+              className="w-[80px] text-xs border border-slate-200 rounded-lg px-1.5 h-8 bg-white focus:outline-none focus:border-primary text-slate-600"
               onClick={(e) => e.stopPropagation()}
             >
               {txTypes.map((t) => (
@@ -355,7 +356,7 @@ function SortableSubCategoryRow({
                 value={subEditForm.defaultNote}
                 onChange={(e) => onSubEditFormChange({ ...subEditForm, defaultNote: e.target.value })}
                 placeholder="备注"
-                className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-primary text-slate-700"
+                className="w-full text-xs border border-slate-200 rounded-lg px-2 h-8 bg-white focus:outline-none focus:border-primary text-slate-700"
                 onClick={(e) => e.stopPropagation()}
                 onKeyDown={onSubEditKeyDown}
               />
@@ -363,7 +364,7 @@ function SortableSubCategoryRow({
           </div>
         ) : (
           <div className="flex items-center gap-2">
-            <span className={`text-base font-semibold tabular-nums w-[100px] text-right flex-shrink-0 ${
+            <span className={`text-sm font-semibold tabular-nums w-[100px] text-right flex-shrink-0 ${
               sub.defaultType === 'income' ? 'text-emerald-500' : sub.defaultType === 'ignore' ? 'text-slate-400' : 'text-expense'
             }`}>
               {sub.defaultAmount > 0
@@ -372,7 +373,7 @@ function SortableSubCategoryRow({
               }
             </span>
             {sub.defaultPaymentMethod ? (
-              <span className="inline-flex items-center gap-0.5 text-xs text-slate-400 bg-slate-100 px-2 py-1 rounded-full flex-shrink-0">
+              <span className="inline-flex items-center gap-0.5 text-sm text-slate-400 bg-slate-100 px-2 py-1 rounded-full flex-shrink-0">
                 {(() => {
                   const pm = paymentMethods.find((p) => p.name === sub.defaultPaymentMethod)
                   return pm ? pm.icon : ''
@@ -382,11 +383,11 @@ function SortableSubCategoryRow({
             ) : (
               <span className="w-[90px] flex-shrink-0" />
             )}
-            <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full flex-shrink-0 ${
+            <span className={`inline-flex items-center gap-1 text-sm px-2 py-1 rounded-full flex-shrink-0 ${
               sub.defaultType === 'income'
                 ? 'text-emerald-600 bg-emerald-50'
                 : sub.defaultType === 'ignore'
-                ? 'text-slate-500 bg-slate-100'
+                ? 'text-slate-500 bg-slate-200'
                 : 'text-red-500 bg-red-50'
             }`}>
               {sub.defaultType === 'income' ? '💰 收入' : sub.defaultType === 'ignore' ? '⏭️ 不计' : '💸 支出'}
@@ -406,7 +407,7 @@ function SortableSubCategoryRow({
         className={`w-7 h-7 flex items-center justify-center rounded-lg transition-colors flex-shrink-0 ${
           isEditing
             ? 'text-slate-400 hover:bg-red-50 hover:text-red-500'
-            : 'opacity-0 group-hover:opacity-100 text-slate-300 hover:bg-red-50 hover:text-red-500'
+            : 'opacity-0 group-hover:opacity-100 text-slate-400 hover:bg-red-50 hover:text-red-500'
         }`}
         title="删除小类"
       >
@@ -447,7 +448,6 @@ export default function CategoryManager() {
   const [newCatName, setNewCatName] = useState('')
   const [newCatIcon, setNewCatIcon] = useState(EMOJI_LIST[0])
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
-  const [emojiPage, setEmojiPage] = useState(0)
 
   // 编辑大类名称
   const [editingCatId, setEditingCatId] = useState<number | null>(null)
@@ -672,9 +672,6 @@ export default function CategoryManager() {
     )
   }
 
-  const visibleEmojis = EMOJI_LIST.slice(emojiPage * EMOJI_PER_PAGE, (emojiPage + 1) * EMOJI_PER_PAGE)
-  const totalEmojiPages = Math.ceil(EMOJI_LIST.length / EMOJI_PER_PAGE)
-
   return (
     <div className="space-y-3">
       {/* 标题 */}
@@ -715,7 +712,7 @@ export default function CategoryManager() {
                     onStartEditName={() => { setEditingCatId(cat.id); setEditingCatName(cat.name) }}
                     onChangeEditName={setEditingCatName}
                     onSaveName={() => handleSaveCategoryName(cat.id)}
-                    onIconPicker={() => setIconPickerCatId(cat.id)}
+                    onIconPicker={() => setIconPickerCatId(iconPickerCatId === cat.id ? null : cat.id)}
                     onEmojiSelect={handleEmojiSelect}
                     onCloseIconPicker={() => setIconPickerCatId(null)}
                     onDelete={() => setDeleteTarget({ type: 'category', id: cat.id, name: cat.name })}
@@ -755,7 +752,7 @@ export default function CategoryManager() {
                     {pendingAddCatId === cat.id && editingSubId === -1 && (
                       <div
                         ref={subEditRef}
-                        className="flex items-center gap-4 px-4 pl-12 py-3.5 text-base bg-indigo-50/60 border-l-2 border-l-primary border-b border-slate-50"
+                        className="flex items-center gap-2 px-2 pl-2 py-1 text-base bg-indigo-50 border-l-2 border-l-primary border-b border-slate-50"
                       >
                         <div className="w-6 flex-shrink-0" />
                         <div className="w-4 flex-shrink-0" />
@@ -764,7 +761,7 @@ export default function CategoryManager() {
                           value={subEditForm.subName}
                           onChange={(e) => setSubEditForm({ ...subEditForm, subName: e.target.value })}
                           placeholder="小类名称"
-                          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 w-[110px] flex-shrink-0 bg-white focus:outline-none focus:border-primary text-slate-700"
+                          className="text-xs border border-slate-200 rounded-lg px-2 h-8 w-[110px] flex-shrink-0 bg-white focus:outline-none focus:border-primary text-slate-700"
                           onClick={(e) => e.stopPropagation()}
                           onKeyDown={handleSubEditKeyDown}
                           autoFocus
@@ -777,7 +774,7 @@ export default function CategoryManager() {
                               value={subEditForm.defaultAmount}
                               onChange={(e) => setSubEditForm({ ...subEditForm, defaultAmount: e.target.value })}
                               placeholder="金额"
-                              className="w-[90px] text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-primary text-right font-semibold tabular-nums"
+                              className="w-[90px] text-xs border border-slate-200 rounded-lg px-2 h-8 bg-white focus:outline-none focus:border-primary text-right font-semibold tabular-nums"
                               style={{ color: subEditForm.defaultType === 'income' ? '#10b981' : subEditForm.defaultType === 'ignore' ? '#94a3b8' : '#ef4444' }}
                               onClick={(e) => e.stopPropagation()}
                               onKeyDown={handleSubEditKeyDown}
@@ -785,7 +782,7 @@ export default function CategoryManager() {
                             <select
                               value={subEditForm.defaultPaymentMethod}
                               onChange={(e) => setSubEditForm({ ...subEditForm, defaultPaymentMethod: e.target.value })}
-                              className="w-[90px] text-xs border border-slate-200 rounded-lg px-1.5 py-1.5 bg-white focus:outline-none focus:border-primary text-slate-500"
+                              className="w-[90px] text-xs border border-slate-200 rounded-lg px-1.5 h-8 bg-white focus:outline-none focus:border-primary text-slate-500"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <option value="">支付方式</option>
@@ -796,7 +793,7 @@ export default function CategoryManager() {
                             <select
                               value={subEditForm.defaultType}
                               onChange={(e) => setSubEditForm({ ...subEditForm, defaultType: e.target.value as TransactionType })}
-                              className="w-[80px] text-xs border border-slate-200 rounded-lg px-1.5 py-1.5 bg-white focus:outline-none focus:border-primary text-slate-600"
+                              className="w-[80px] text-xs border border-slate-200 rounded-lg px-1.5 h-8 bg-white focus:outline-none focus:border-primary text-slate-600"
                               onClick={(e) => e.stopPropagation()}
                             >
                               {txTypes.map((t) => (
@@ -809,7 +806,7 @@ export default function CategoryManager() {
                                 value={subEditForm.defaultNote}
                                 onChange={(e) => setSubEditForm({ ...subEditForm, defaultNote: e.target.value })}
                                 placeholder="备注"
-                                className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-primary text-slate-700"
+                                className="w-full text-xs border border-slate-200 rounded-lg px-2 h-8 bg-white focus:outline-none focus:border-primary text-slate-700"
                                 onClick={(e) => e.stopPropagation()}
                                 onKeyDown={handleSubEditKeyDown}
                               />
@@ -833,52 +830,15 @@ export default function CategoryManager() {
       {/* ========== 新增大类区域 ========== */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
         <h3 className="text-sm font-semibold text-slate-700 mb-3">新增大类</h3>
-        <div className="flex items-end gap-2">
+        <div className="flex items-end gap-2 relative">
           {/* Emoji 选择器 */}
-          <div className="flex-shrink-0 relative">
-            <button
-              onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-              className="w-10 h-10 flex items-center justify-center bg-slate-100 rounded-lg text-xl hover:bg-slate-200 transition-colors"
-            >
-              {newCatIcon}
-            </button>
-            {showEmojiPicker && (
-              <div className="absolute z-40 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg p-3">
-                <div className="grid grid-cols-6 gap-1">
-                  {visibleEmojis.map((emoji) => (
-                    <button
-                      key={emoji}
-                      onClick={() => handleEmojiSelect(emoji)}
-                      className={`w-8 h-8 flex items-center justify-center rounded-lg text-base hover:bg-slate-100 transition-colors ${
-                        newCatIcon === emoji ? 'bg-primary/10 ring-1 ring-primary' : ''
-                      }`}
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </div>
-                {totalEmojiPages > 1 && (
-                  <div className="flex justify-between mt-2">
-                    <button
-                      onClick={() => setEmojiPage(Math.max(0, emojiPage - 1))}
-                      disabled={emojiPage === 0}
-                      className="text-xs text-slate-400 disabled:opacity-30"
-                    >
-                      ← 上一页
-                    </button>
-                    <span className="text-xs text-slate-400">{emojiPage + 1}/{totalEmojiPages}</span>
-                    <button
-                      onClick={() => setEmojiPage(Math.min(totalEmojiPages - 1, emojiPage + 1))}
-                      disabled={emojiPage >= totalEmojiPages - 1}
-                      className="text-xs text-slate-400 disabled:opacity-30"
-                    >
-                      下一页 →
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+          <IconPickerButton
+            icon={newCatIcon}
+            open={showEmojiPicker}
+            onToggle={() => setShowEmojiPicker(!showEmojiPicker)}
+            onPick={handleEmojiSelect}
+            onClose={() => setShowEmojiPicker(false)}
+          />
 
           {/* 名称输入 */}
           <input
