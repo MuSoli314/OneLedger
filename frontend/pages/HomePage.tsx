@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import ExpenseList from '../components/ExpenseList'
 import ExpenseForm from '../components/ExpenseForm'
-import BudgetSetup from '../components/BudgetSetup'
 import ConfirmDialog from '../components/ConfirmDialog'
 import DatePicker from '../components/DatePicker'
 import DateRangePicker from '../components/DateRangePicker'
@@ -15,12 +14,15 @@ import {
   updateExpense,
   getMonths,
   getBudget,
+  setBudget,
   getAllExpenses,
   expensesToCSV,
   addExpense,
   getTrendData,
 } from '../data/database'
-import { localDateString, localMonthString, formatMonth, getRangeDates } from '../data/dateUtils'
+import { localDateString, localMonthString, formatMonth, getRangeDates, addDays } from '../data/dateUtils'
+import { format } from 'date-fns'
+import { PAYMENT_METHODS } from '../data/categories'
 import { useCategories } from '../contexts/CategoryContext'
 import type { Expense, Budget, TransactionType, RangeMode, TrendPoint } from '../data/types'
 
@@ -59,7 +61,7 @@ export default function HomePage() {
   const [trendCategory, setTrendCategory] = useState('') // '' 表示「全天」（所有大类按月汇总）
   const [loading, setLoading] = useState(true)
   const [budget, setBudgetData] = useState<Budget | null>(null)
-  const [showBudget, setShowBudget] = useState(false)
+  const [budgetDraft, setBudgetDraft] = useState('') // 预算内联文本框内容
   const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null)
   const [deleteDateTarget, setDeleteDateTarget] = useState<string | null>(null)
   const [deleteCategoryTarget, setDeleteCategoryTarget] = useState<{ date: string; category_l1: string } | null>(null)
@@ -75,7 +77,6 @@ export default function HomePage() {
   // 预算在「本月 / 上月 / 历史月份」显示；自定义若起止同月也显示该月预算
   const showBudgetPanel = rangeMode === 'month' || rangeMode === 'lastMonth' || rangeMode === 'history' || (rangeMode === 'custom' && customRange.start.slice(0, 7) === customRange.end.slice(0, 7))
   const budgetMonth = rangeMode === 'history' ? historyMonth : rangeMode === 'lastMonth' ? localMonthString(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1)) : rangeMode === 'custom' ? customRange.start.slice(0, 7) : thisMonth
-  const isThisMonth = rangeMode === 'month'
 
   // 卡片左上角标签 + 金额标签
   const rangeLabel =
@@ -85,12 +86,6 @@ export default function HomePage() {
       : rangeMode === 'lastMonth' ? '上月'
       : rangeMode === 'custom' ? `${customRange.start} 至 ${customRange.end}`
       : formatMonth(historyMonth)
-  const amountLabel =
-    rangeMode === 'week' ? '近一周支出'
-      : rangeMode === '30d' ? '近一月支出'
-      : rangeMode === 'lastMonth' ? '上月支出'
-      : rangeMode === 'custom' ? '自定义支出'
-      : isThisMonth ? '本月支出' : '当月支出'
 
   // 加载列表（按时间范围筛选）+ 历史月份下拉数据
   const loadData = useCallback(async () => {
@@ -135,6 +130,37 @@ export default function HomePage() {
 
   // 已有记录的日期集合（用于"添加日期"查重）— 只覆盖当前时间范围
   const existingDates = useMemo(() => new Set(expenses.map((e) => e.date)), [expenses])
+
+  // 快捷按钮要添加的日期 = 列表里所有日期（真实记录 + 手动添加的空白日期）的最大值 + 1 天。
+  // 只在「本月」显示，且最大日期还没到这个月最后一天时才展示（可提前添加未来日期做计划；
+  // 本月的查询范围已覆盖整个自然月，添加的未来日期会立刻显示在列表里）。
+  const [quickAdding, setQuickAdding] = useState(false)
+  const nextQuickDate = useMemo(() => {
+    if (rangeMode !== 'month') return null
+    let latest = ''
+    for (const e of expenses) {
+      if (e.date > latest) latest = e.date
+    }
+    for (const d of addedDates) {
+      if (d > latest) latest = d
+    }
+    if (!latest) return null
+    const next = addDays(new Date(`${latest}T00:00:00`), 1)
+    // 已到本月最后一天 → 不再提供添加快捷按钮
+    if (localDateString(next) > range.end) return null
+    return next
+  }, [expenses, addedDates, rangeMode, range.end])
+
+  // 快捷添加「下一天」：防连点，完成后刷新
+  const handleQuickAdd = async () => {
+    if (!nextQuickDate || quickAdding) return
+    setQuickAdding(true)
+    try {
+      await saveNewDate(localDateString(nextQuickDate))
+    } finally {
+      setQuickAdding(false)
+    }
+  }
 
   // 添加日期弹窗：按 Esc 关闭
   useEffect(() => {
@@ -220,16 +246,58 @@ export default function HomePage() {
     setShowForm(false)
   }
 
+  // 保存某一天：有默认小类的分类自动存成记录，没有默认小类的只加空白日期。
+  // 右下角弹窗的「添加」和顶部快捷按钮共用此函数，保证两个入口行为一致。
+  const saveNewDate = async (date: string) => {
+    let savedAny = false
+    for (const cat of categories) {
+      const defaults = cat.children.filter((c) => c.isDefault)
+      for (const sub of defaults) {
+        try {
+          await addExpense({
+            amount: sub.defaultAmount || 0,
+            category_l1: cat.name,
+            category_l2: sub.name,
+            date,
+            note: sub.defaultNote || '',
+            payment_method: sub.defaultPaymentMethod || '',
+            type: sub.defaultType || 'expense',
+          })
+          savedAny = true
+        } catch (err) {
+          console.error('自动保存默认记录失败:', err)
+        }
+      }
+    }
+
+    // 如果没有默认小类，仍然把日期添加到列表中（空日期）
+    if (!savedAny) {
+      setAddedDates((prev) => (prev.includes(date) ? prev : [...prev, date]))
+    }
+
+    // 刷新数据，让新保存的记录显示出来
+    await loadData()
+  }
+
   // 卡片统计：expenses 已按时间范围筛选，直接汇总
   const expenseTotal = expenses
     .filter((e) => e.type === 'expense')
     .reduce((sum, e) => sum + e.amount, 0)
 
-  const incomeTotal = expenses
-    .filter((e) => e.type === 'income')
-    .reduce((sum, e) => sum + e.amount, 0)
-
   const recordCount = expenses.length
+
+  // 支付方式统计（只统计支出，与卡片总支出 ¥expenseTotal 口径一致；金额按从高到低排序）
+  const paymentTotals = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const e of expenses) {
+      if (e.type !== 'expense') continue
+      const key = e.payment_method || '未设置'
+      map.set(key, (map.get(key) ?? 0) + e.amount)
+    }
+    return [...map.entries()]
+      .map(([name, total]) => ({ name, total }))
+      .sort((a, b) => b.total - a.total)
+  }, [expenses])
 
   // 预算进度
   const budgetPct = !!budget?.amount && budget.amount > 0
@@ -237,6 +305,33 @@ export default function HomePage() {
     : 0
   const overBudget = showBudgetPanel && !!budget?.amount && budget.amount > 0 && expenseTotal > budget.amount
   const nearBudget = showBudgetPanel && !!budget?.amount && budget.amount > 0 && budgetPct >= 80 && !overBudget
+  const remaining = (budget?.amount || 0) - expenseTotal
+
+  // 预算加载后同步到内联文本框
+  useEffect(() => {
+    setBudgetDraft(budget?.amount ? budget.amount.toFixed(0) : '')
+  }, [budget])
+
+  // 内联文本框保存预算（回车或失焦触发）
+  const commitBudget = async () => {
+    const num = parseFloat(budgetDraft)
+    if (isNaN(num) || num < 0) {
+      // 非法输入，还原为当前预算值
+      setBudgetDraft(budget?.amount ? budget.amount.toFixed(0) : '')
+      return
+    }
+    if (num === 0) {
+      // 0 视为未设置：不保存，回到未设置状态
+      setBudgetDraft('')
+      return
+    }
+    try {
+      await setBudget(budgetMonth, Math.round(num * 100) / 100)
+      refreshBudget()
+    } catch (err) {
+      alert('预算保存失败：' + String(err))
+    }
+  }
 
   // 导出（导出全部记录，与时间范围无关）
   const handleExport = async () => {
@@ -300,63 +395,60 @@ export default function HomePage() {
               ? 'from-amber-500 to-amber-600 shadow-amber-500/30'
               : 'from-primary to-primary-dark shadow-primary/20'
           }`}>
-            {/* 第一行：范围标签 + 导出 */}
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm opacity-80">{rangeLabel}</span>
-              <button
-                onClick={handleExport}
-                className="bg-white/20 hover:bg-white/30 text-xs rounded-lg px-2 py-1 transition-colors"
-                title="导出为 CSV"
-              >
-                导出
-              </button>
-            </div>
-
-            {/* 时间范围选择器 */}
-            <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-              {RANGE_PILLS.map((p) => (
+            {/* 时间范围选择器 + 导出（一行，选中的按钮即标题） */}
+            <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+                {RANGE_PILLS.map((p) => (
+                  <button
+                    key={p.key}
+                    onClick={() => setRangeMode(p.key)}
+                    className={`text-xs rounded-lg px-2.5 py-1 transition-colors ${
+                      rangeMode === p.key
+                        ? 'bg-white/30 font-semibold'
+                        : 'bg-white/10 hover:bg-white/20'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+                <select
+                  value={rangeMode === 'history' ? historyMonth : ''}
+                  onChange={(e) => {
+                    if (!e.target.value) return
+                    setHistoryMonth(e.target.value)
+                    setRangeMode('history')
+                  }}
+                  className={`text-xs rounded-lg px-2 py-1 border border-white/20 focus:outline-none ${
+                    rangeMode === 'history'
+                      ? 'bg-white/30 text-white'
+                      : 'bg-white/10 text-white/80'
+                  }`}
+                >
+                  <option value="" className="text-slate-800">历史月份▾</option>
+                  {months.map((m) => (
+                    <option key={m} value={m} className="text-slate-800">
+                      {formatMonth(m)}
+                    </option>
+                  ))}
+                </select>
                 <button
-                  key={p.key}
-                  onClick={() => setRangeMode(p.key)}
-                  className={`text-xs rounded-lg px-2.5 py-1 transition-colors ${
-                    rangeMode === p.key
+                  onClick={() => { setRangeMode('custom'); setShowCustomPicker(true) }}
+                  className={`w-48 whitespace-nowrap text-center text-xs rounded-lg px-2.5 py-1 transition-colors ${
+                    rangeMode === 'custom'
                       ? 'bg-white/30 font-semibold'
                       : 'bg-white/10 hover:bg-white/20'
                   }`}
                 >
-                  {p.label}
+                  {rangeMode === 'custom'
+                    ? `${customRange.start} 至 ${customRange.end}`
+                    : '自定义'}
                 </button>
-              ))}
-              <select
-                value={rangeMode === 'history' ? historyMonth : ''}
-                onChange={(e) => {
-                  if (!e.target.value) return
-                  setHistoryMonth(e.target.value)
-                  setRangeMode('history')
-                }}
-                className={`text-xs rounded-lg px-2 py-1 border border-white/20 focus:outline-none ${
-                  rangeMode === 'history'
-                    ? 'bg-white/30 text-white'
-                    : 'bg-white/10 text-white/80'
-                }`}
-              >
-                <option value="" className="text-slate-800">历史月份▾</option>
-                {months.map((m) => (
-                  <option key={m} value={m} className="text-slate-800">
-                    {formatMonth(m)}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => { setRangeMode('custom'); setShowCustomPicker(true) }}
-                className={`text-xs rounded-lg px-2.5 py-1 transition-colors ${
-                  rangeMode === 'custom'
-                    ? 'bg-white/30 font-semibold'
-                    : 'bg-white/10 hover:bg-white/20'
-                }`}
-              >
-                自定义
-              </button>
+                <button
+                  onClick={handleExport}
+                  className="bg-white/20 hover:bg-white/30 text-xs rounded-lg px-2 py-1 transition-colors"
+                  title="导出为 CSV"
+                >
+                  导出
+                </button>
             </div>
 
             {rangeMode === 'custom' && showCustomPicker && (
@@ -371,91 +463,128 @@ export default function HomePage() {
               </div>
             )}
 
-            {/* 金额区域 */}
-            <div className="flex items-end justify-between">
-              <div>
-                <div className="text-sm opacity-80 mb-1">{amountLabel}</div>
-                <div className="text-3xl font-bold tabular-nums">
-                  ¥{expenseTotal.toFixed(2)}
+            {/* 金额 + 预算（一行四块：支出/笔数/预算/剩余各占 1/4）+ 进度条 */}
+            <div>
+              <div className="flex items-center text-sm">
+                {/* 支出：占 1/4 */}
+                <div className={`shrink-0 flex items-center gap-1 whitespace-nowrap ${showBudgetPanel ? 'w-1/4' : 'w-1/2'}`}>
+                  <span className="opacity-80">支出：</span>
+                  <span className="font-bold tabular-nums">¥{expenseTotal.toFixed(2)}</span>
                 </div>
-                {incomeTotal > 0 && (
-                  <div className="text-sm opacity-70 mt-1">
-                    💰 收入 ¥{incomeTotal.toFixed(2)}
+
+                {/* 笔数：占 1/4 */}
+                <div className={`shrink-0 flex items-center gap-1 whitespace-nowrap ${showBudgetPanel ? 'w-1/4' : 'w-1/2'}`}>
+                  <span className="opacity-80">笔数：</span>
+                  <span className="font-semibold tabular-nums">{recordCount}</span>
+                </div>
+
+                {/* 预算：占 1/4（输入框，↑↓ 箭头 ±1000） */}
+                {showBudgetPanel && (
+                  <div className="w-1/4 shrink-0 flex items-center gap-1 whitespace-nowrap">
+                    <span className="opacity-80">预算：</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step={1000}
+                      value={budgetDraft}
+                      onChange={(e) => setBudgetDraft(e.target.value)}
+                      onBlur={commitBudget}
+                      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                      placeholder="未设置"
+                      className="w-16 bg-white/20 rounded-md px-1 py-0.5 font-semibold tabular-nums placeholder-white/50 focus:bg-white/30 focus:outline-none"
+                    />
                   </div>
                 )}
-                <div className="text-sm opacity-60 mt-1">
-                  共 {recordCount} 笔记录
-                </div>
+
+                {/* 剩余：占 1/4（未设置预算显示 -；接近/超出预算时底色变色提示） */}
+                {showBudgetPanel && (
+                  <div className="w-1/4 shrink-0 flex items-center gap-1 whitespace-nowrap">
+                    <span className="opacity-80">剩余：</span>
+                    <span className={`font-semibold tabular-nums rounded-md px-1.5 py-0.5 transition-colors ${
+                      overBudget
+                        ? 'bg-white text-red-600'
+                        : nearBudget
+                        ? 'bg-white text-amber-600'
+                        : 'bg-white/20'
+                    }`}>
+                      {budget?.amount && budget.amount > 0 ? `¥${remaining.toFixed(2)}` : '-'}
+                    </span>
+                  </div>
+                )}
               </div>
 
-              {/* 预算区域（仅本月/历史月份显示） */}
-              {showBudgetPanel && (
-                <div className="text-right">
-                  <button
-                    onClick={() => setShowBudget(true)}
-                    className="text-xs bg-white/20 hover:bg-white/30 rounded-lg px-2.5 py-1 transition-colors"
-                  >
-                    {budget?.amount ? '修改预算' : '设置预算'}
-                  </button>
-                  {budget?.amount && budget.amount > 0 && (
-                    <div className="mt-2">
-                      <div className="text-[11px] opacity-70">
-                        预算 ¥{budget.amount.toFixed(0)}
-                      </div>
-                      <div className="w-24 h-1.5 bg-white/20 rounded-full mt-1 overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-300 ${
-                            overBudget ? 'bg-white' : 'bg-white/70'
-                          }`}
-                          style={{ width: `${Math.min(budgetPct, 100)}%` }}
-                        />
-                      </div>
-                      <div className={`text-[11px] mt-0.5 ${overBudget ? 'font-bold' : 'opacity-70'}`}>
-                        {overBudget
-                          ? `超支 ¥${(expenseTotal - budget.amount).toFixed(2)}`
-                          : `剩余 ¥${(budget.amount - expenseTotal).toFixed(2)}`
-                        }
-                      </div>
-                    </div>
-                  )}
+              {/* 进度条（设置了预算才显示） */}
+              {showBudgetPanel && !!budget?.amount && budget.amount > 0 && (
+                <div className="mt-2.5 h-1.5 bg-white/20 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      overBudget ? 'bg-white' : 'bg-white/70'
+                    }`}
+                    style={{ width: `${Math.min(budgetPct, 100)}%` }}
+                  />
                 </div>
               )}
             </div>
+
+            {/* 支付方式统计（无标题；每个支付方式占 1/3，格式：icon 名称 ¥金额 占比%） */}
+            {paymentTotals.length > 0 && (
+              <div className="mt-4 pt-3 border-t border-white/20">
+                <div className="grid grid-cols-3 gap-1.5">
+                  {paymentTotals.map(({ name, total }) => {
+                    const icon = PAYMENT_METHODS.find((p) => p.name === name)?.icon || '💳'
+                    const pct = expenseTotal > 0 ? (total / expenseTotal) * 100 : 0
+                    return (
+                      <div
+                        key={name}
+                        className="flex items-center justify-between gap-1 bg-white/10 rounded-lg px-2 py-1.5 text-xs whitespace-nowrap overflow-hidden"
+                        title={`${name}：¥${total.toFixed(2)}（${pct.toFixed(1)}%）`}
+                      >
+                        <span className="text-white/90">{icon} {name}</span>
+                        <span className="font-semibold tabular-nums">¥{total.toFixed(2)}</span>
+                        <span className="text-white/50 tabular-nums">{pct.toFixed(1)}%</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </div>
-
-          {/* 超支提醒横幅 */}
-          {overBudget && (
-            <div className="px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl flex items-center gap-2">
-              <span className="text-lg">⚠️</span>
-              <span className="text-sm text-red-600 font-medium">
-                {isThisMonth ? '本月' : '当月'}已超出预算 ¥{(expenseTotal - (budget?.amount || 0)).toFixed(2)}，请注意控制支出
-              </span>
-            </div>
-          )}
-
-          {/* 接近预算提醒横幅 */}
-          {nearBudget && (
-            <div className="px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center gap-2">
-              <span className="text-lg">💡</span>
-              <span className="text-sm text-amber-600 font-medium">
-                {isThisMonth ? '本月' : '当月'}预算已使用 {budgetPct.toFixed(0)}%，剩余 ¥{((budget?.amount || 0) - expenseTotal).toFixed(2)}
-              </span>
-            </div>
-          )}
 
           {/* 记录列表 */}
           {loading ? (
             <div className="text-center py-16 text-slate-400 text-sm">加载中...</div>
           ) : (
-            <ExpenseList
-              expenses={expenses}
-              onDelete={handleDelete}
-              onUpdate={handleUpdate}
-              onRefresh={loadData}
-              extraDates={addedDates}
-              onDeleteDate={handleDeleteDate}
-              onDeleteCategory={handleDeleteCategory}
-            />
+            <div className="space-y-4">
+              {/* 快捷添加「下一天」按钮（仅本月，且最大日期未到月末时才显示） */}
+              {nextQuickDate && (
+                <button
+                  onClick={handleQuickAdd}
+                  disabled={quickAdding}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-primary/40 text-primary hover:bg-primary/5 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="添加下一天"
+                >
+                  {quickAdding ? (
+                    <span>正在添加…</span>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      <span>添加 {format(nextQuickDate, 'MM/dd')}（下一天）</span>
+                    </>
+                  )}
+                </button>
+              )}
+              <ExpenseList
+                expenses={expenses}
+                onDelete={handleDelete}
+                onUpdate={handleUpdate}
+                onRefresh={loadData}
+                extraDates={addedDates}
+                onDeleteDate={handleDeleteDate}
+                onDeleteCategory={handleDeleteCategory}
+              />
+            </div>
           )}
         </div>
 
@@ -504,38 +633,9 @@ export default function HomePage() {
                 onClick={async () => {
                   if (!addingDate) return
                   if (existingDates.has(addingDate)) return
-
-                  // 查找所有默认小类，直接存入数据库
-                  let savedAny = false
-                  for (const cat of categories) {
-                    const defaults = cat.children.filter(c => c.isDefault)
-                    for (const sub of defaults) {
-                      try {
-                        await addExpense({
-                          amount: sub.defaultAmount || 0,
-                          category_l1: cat.name,
-                          category_l2: sub.name,
-                          date: addingDate,
-                          note: sub.defaultNote || '',
-                          payment_method: sub.defaultPaymentMethod || '',
-                          type: sub.defaultType || 'expense',
-                        })
-                        savedAny = true
-                      } catch (err) {
-                        console.error('自动保存默认记录失败:', err)
-                      }
-                    }
-                  }
-
-                  // 如果没有默认小类，仍然把日期添加到列表中（空日期）
-                  if (!savedAny) {
-                    setAddedDates(prev => prev.includes(addingDate) ? prev : [...prev, addingDate])
-                  }
-
                   setShowDateAdder(false)
                   setAddingDate('')
-                  // 刷新数据，让新保存的记录显示出来
-                  await loadData()
+                  await saveNewDate(addingDate)
                 }}
                 disabled={!addingDate || existingDates.has(addingDate)}
                 className="flex-1 px-4 py-2.5 bg-primary text-white rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors disabled:opacity-50"
@@ -552,15 +652,6 @@ export default function HomePage() {
         <ExpenseForm
           onSuccess={handleFormSuccess}
           onCancel={handleFormCancel}
-        />
-      )}
-
-      {/* 预算设置弹窗 */}
-      {showBudget && (
-        <BudgetSetup
-          month={budgetMonth}
-          onClose={() => setShowBudget(false)}
-          onSaved={() => { setShowBudget(false); refreshBudget() }}
         />
       )}
 

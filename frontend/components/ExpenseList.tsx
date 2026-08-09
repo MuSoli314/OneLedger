@@ -157,7 +157,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
         date: row.date,
         note: form.note,
         payment_method: form.payment_method || '',
-        type: row.type,
+        type: form.type || 'expense',
       })
       setLocalRows((prev) => prev.filter((r) => r.tempId !== tempId))
       setEditingId(null)
@@ -282,7 +282,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
       const lastSub = defaults[defaults.length - 1]
       const lastId = newRows[newRows.length - 1].tempId
       setEditingId(lastId)
-      setEditForm({ category_l2: lastSub.name, note: lastSub.defaultNote || '', amount: (lastSub.defaultAmount || 0).toString(), payment_method: lastSub.defaultPaymentMethod || '', type: 'expense' })
+      setEditForm({ category_l2: lastSub.name, note: lastSub.defaultNote || '', amount: (lastSub.defaultAmount || 0).toString(), payment_method: lastSub.defaultPaymentMethod || '', type: lastSub.defaultType || 'expense' })
     } else {
       // 没有默认小类 → 和老逻辑一样创建空行让用户选择
       handleAddSubCategory(date, l1)
@@ -357,7 +357,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
         // 按日期倒序排列（本地临时行/手动添加的日期也要参与排序）
         .sort(([a], [b]) => b.localeCompare(a))
         .map(([date, items]) => {
-        const dayTotal = items.reduce((sum, e) => sum + e.amount, 0)
+        const dayTotal = items.reduce((sum, e) => sum + (e.type === 'ignore' ? 0 : e.amount), 0)
 
         // 在该日内按一级分类分组
         const groupedByL1: Record<string, Expense[]> = {}
@@ -398,7 +398,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                     const pmTotals: Record<string, number> = {}
                     for (const e of items) {
                       const pm = e.payment_method || ''
-                      if (pm) pmTotals[pm] = (pmTotals[pm] || 0) + e.amount
+                      if (pm && e.type !== 'ignore') pmTotals[pm] = (pmTotals[pm] || 0) + e.amount
                     }
                     return Object.entries(pmTotals)
                       .filter(([, total]) => total > 0)
@@ -472,7 +472,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                     const pmTotals: Record<string, number> = {}
                     for (const e of items) {
                       const pm = e.payment_method || ''
-                      if (pm) pmTotals[pm] = (pmTotals[pm] || 0) + e.amount
+                      if (pm && e.type !== 'ignore') pmTotals[pm] = (pmTotals[pm] || 0) + e.amount
                     }
                     return Object.entries(pmTotals)
                       .filter(([, total]) => total > 0)
@@ -514,7 +514,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                   return idxA - idxB
                 })
                 .map(([l1, l1Items], l1Idx, l1Arr) => {
-                const l1Total = l1Items.reduce((s, e) => s + e.amount, 0)
+                const l1Total = l1Items.reduce((s, e) => s + (e.type === 'ignore' ? 0 : e.amount), 0)
                 // 按分类管理器中的小类顺序显示
                 const cat = categories.find((c) => c.name === l1)
                 const subOrder = new Map(cat?.children.map((c, i) => [c.name, i]) || [])
@@ -531,7 +531,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                     {/* 大类标题行（可点击折叠） */}
                     <button
                       onClick={() => toggleCollapse(collapseKey)}
-                      className={`w-full flex items-center justify-between px-4 py-3 bg-slate-50/80 hover:bg-slate-100/80 transition-colors text-left cursor-pointer ${
+                      className={`w-full flex items-center justify-between px-4 py-2 bg-slate-50 hover:bg-slate-100 transition-colors text-left cursor-pointer ${
                         isLastL1 && collapsed ? '' : 'border-b border-slate-50'
                       } ${collapsed ? 'rounded-b-xl' : ''}`}
                     >
@@ -575,10 +575,12 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                         <div
                           key={expense.id}
                           ref={isEditing ? editRef : undefined}
-                          className={`flex items-center gap-4 px-4 pl-20 py-3.5 text-base transition-colors ${
+                          className={`flex items-center gap-2 px-2 pl-2 py-1 text-base transition-colors ${
                             isEditing
-                              ? 'bg-indigo-50/60 border-l-2 border-l-primary'
-                              : 'hover:bg-slate-50/50 cursor-pointer group'
+                              ? 'bg-indigo-50 border-l-2 border-l-primary'
+                              : expense.type === 'ignore'
+                              ? 'bg-slate-300 hover:bg-slate-400 cursor-pointer group'
+                              : 'hover:bg-slate-50 cursor-pointer group'
                           } ${isLastItem && !isLocal ? '' : 'border-b border-slate-50'}`}
                           onClick={() => !isEditing && startEditing(expense)}
                         >
@@ -605,7 +607,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                                     setEditForm({ ...editForm, category_l2: newL2 })
                                   }
                                 }}
-                                className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-primary text-slate-700"
+                                className="w-full h-8 text-xs border border-slate-200 rounded-lg px-2 bg-white focus:outline-none focus:border-primary text-slate-700"
                                 autoFocus
                                 onClick={(e) => e.stopPropagation()}
                               >
@@ -616,8 +618,8 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                               </select>
                             </div>
                           ) : (
-                            <div className="w-[110px] min-w-0 flex-shrink-0">
-                              <span className={`font-medium ${expense.category_l2 ? 'text-slate-700' : 'text-slate-300 italic'}`}>
+                            <div className="w-[110px] min-w-0 flex-shrink-0 text-right">
+                              <span className={`text-sm font-medium ${expense.category_l2 ? 'text-slate-700' : 'text-slate-300 italic'}`}>
                                 {expense.category_l2 || '未设置'}
                               </span>
                             </div>
@@ -632,7 +634,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                                   inputMode="decimal"
                                   value={editForm.amount}
                                   onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })}
-                                  className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-primary text-right font-semibold tabular-nums"
+                                  className="w-full h-8 text-xs border border-slate-200 rounded-lg px-2 bg-white focus:outline-none focus:border-primary text-right font-semibold tabular-nums"
                                   style={{ color: editForm.type === 'income' ? '#10b981' : editForm.type === 'ignore' ? '#94a3b8' : '#ef4444' }}
                                   onClick={(e) => e.stopPropagation()}
                                   onKeyDown={handleKeyDown}
@@ -640,7 +642,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                                 />
                               </div>
                             ) : (
-                              <span className={`text-base font-semibold tabular-nums w-[100px] text-right ${
+                              <span className={`text-sm font-semibold tabular-nums w-[100px] text-right ${
                                 expense.type === 'income' ? 'text-emerald-500' : expense.type === 'ignore' ? 'text-slate-400' : 'text-expense'
                               }`}>
                                 {expense.type === 'income' ? '+' : expense.type === 'ignore' ? '' : '-'}¥{expense.amount.toFixed(2)}
@@ -654,7 +656,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                               <select
                                 value={editForm.payment_method}
                                 onChange={(e) => setEditForm({ ...editForm, payment_method: e.target.value })}
-                                className="w-full text-xs border border-slate-200 rounded-lg px-1.5 py-1.5 bg-white focus:outline-none focus:border-primary text-slate-500"
+                                className="w-full h-8 text-xs border border-slate-200 rounded-lg px-1.5 bg-white focus:outline-none focus:border-primary text-slate-500"
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 <option value="">支付方式</option>
@@ -665,13 +667,13 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                             </div>
                           ) : (
                             expense.payment_method ? (
-                              <div className="flex-shrink-0">
-                                <span className="inline-flex items-center gap-1 text-xs text-slate-400 bg-slate-100 px-2 py-1 rounded-full">
+                              <div className="w-[90px] flex-shrink-0 flex justify-end">
+                                <span className="inline-flex items-center gap-1 text-sm text-slate-400 bg-slate-100 px-2 py-1 rounded-full whitespace-nowrap">
                                   {PAYMENT_METHODS.find((pm) => pm.name === expense.payment_method)?.icon || ''}
                                   {expense.payment_method}
                                 </span>
                               </div>
-                            ) : null
+                            ) : <div className="w-[90px] flex-shrink-0" />
                           )}
 
                           {/* 收支类型 */}
@@ -680,7 +682,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                               <select
                                 value={editForm.type}
                                 onChange={(e) => setEditForm({ ...editForm, type: e.target.value as TransactionType })}
-                                className="w-full text-xs border border-slate-200 rounded-lg px-1.5 py-1.5 bg-white focus:outline-none focus:border-primary text-slate-600"
+                                className="w-full h-8 text-xs border border-slate-200 rounded-lg px-1.5 bg-white focus:outline-none focus:border-primary text-slate-600"
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 {TRANSACTION_TYPES.map((t) => (
@@ -689,11 +691,11 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                               </select>
                             </div>
                           ) : (
-                            <div className="flex-shrink-0">
-                              <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full ${
+                            <div className="w-[80px] flex-shrink-0 flex justify-end">
+                              <span className={`inline-flex items-center gap-1 text-sm px-2 py-1 rounded-full whitespace-nowrap ${
                                 expense.type === 'expense' ? 'text-red-500 bg-red-50'
                                   : expense.type === 'income' ? 'text-emerald-600 bg-emerald-50'
-                                  : 'text-slate-500 bg-slate-100'
+                                  : 'text-slate-500 bg-slate-200'
                               }`}>
                                 {expense.type === 'expense' ? '💸 支出'
                                   : expense.type === 'income' ? '💰 收入'
@@ -710,14 +712,14 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                                 value={editForm.note}
                                 onChange={(e) => setEditForm({ ...editForm, note: e.target.value })}
                                 placeholder="备注（可选）"
-                                className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:border-primary text-slate-700"
+                                className="w-full h-8 text-xs border border-slate-200 rounded-lg px-2 bg-white focus:outline-none focus:border-primary text-slate-700"
                                 onClick={(e) => e.stopPropagation()}
                                 onKeyDown={handleKeyDown}
                               />
                             </div>
                           ) : (
                             <div className="flex-1 min-w-0">
-                              <span className="text-slate-400 truncate block">
+                              <span className="text-sm text-slate-400 truncate block">
                                 {expense.note || '-'}
                               </span>
                             </div>
@@ -745,7 +747,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                     {!collapsed && (
                       <button
                         onClick={() => handleAddSubCategory(date, l1)}
-                        className={`w-full flex items-center gap-2 px-4 pl-20 py-2.5 text-sm text-slate-400 hover:text-primary hover:bg-primary/5 transition-colors border-b border-slate-50 ${
+                        className={`w-full flex items-center gap-2 px-4 pl-16 py-2.5 text-sm text-slate-400 hover:text-primary hover:bg-primary/5 transition-colors border-b border-slate-50 ${
                           isLastL1 ? '' : ''
                         }`}
                       >

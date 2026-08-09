@@ -61,8 +61,10 @@ export function getRangeDates(
     return { start: localDateString(addDays(now, -29)), end: localDateString(now) }
   }
   if (mode === 'month') {
-    // 本月 = 自然月 1 号 → 今天
-    return { start: localDateString(new Date(now.getFullYear(), now.getMonth(), 1)), end: localDateString(now) }
+    // 本月 = 自然月 1 号 → 本月最后一天（含为计划提前添加的未来日期）
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+    return { start: localDateString(firstDay), end: localDateString(lastDay) }
   }
   if (mode === 'lastMonth') {
     // 上月 = 上月 1 号 → 上月最后一天
