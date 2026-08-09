@@ -22,7 +22,7 @@ interface CategoryContextValue {
   deleteCategory: (id: number) => Promise<void>
   updateCategoryName: (id: number, name: string) => Promise<void>
   updateCategoryIcon: (id: number, icon: string) => Promise<void>
-  addSubCategory: (categoryId: number, name: string) => Promise<void>
+  addSubCategory: (categoryId: number, name: string) => Promise<number>
   deleteSubCategory: (id: number) => Promise<void>
   updateSubCategoryName: (id: number, name: string) => Promise<void>
   toggleSubCategoryDefault: (id: number, isDefault: boolean) => Promise<void>
@@ -72,9 +72,10 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
     await refresh()
   }, [refresh])
 
-  const addSubCategory = useCallback(async (categoryId: number, name: string) => {
-    await dbAddSubCategory(categoryId, name)
+  const addSubCategory = useCallback(async (categoryId: number, name: string): Promise<number> => {
+    const newId = await dbAddSubCategory(categoryId, name)
     await refresh()
+    return newId
   }, [refresh])
 
   const deleteSubCategory = useCallback(async (id: number) => {
