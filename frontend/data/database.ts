@@ -224,7 +224,7 @@ export async function getAllExpenses(): Promise<Expense[]> {
 // 按日期范围的每日支出聚合（右栏「当月支出」图；categoryL1 传值则只看该大类）
 export async function getDailyTotals(startDate: string, endDate: string, categoryL1?: string): Promise<DailyTrendPoint[]> {
   const database = await getDb()
-  const conditions = ['date >= $1', 'date <= $2', "type='expense'"]
+  const conditions = ['date >= $1', 'date <= $2', "type IN (SELECT code FROM tx_types WHERE category='expense')"]
   const values: string[] = [startDate, endDate]
   if (categoryL1) {
     conditions.push('category_l1=$3')
@@ -240,18 +240,18 @@ export async function getDailyTotals(startDate: string, endDate: string, categor
 export async function getStatsByRange(startDate: string, endDate: string): Promise<MonthlyStats> {
   const database = await getDb()
   const summary = await database.select<{ total: number; count: number }[]>(
-    "SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as count FROM expenses WHERE date >= $1 AND date <= $2 AND type='expense'",
+    "SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as count FROM expenses WHERE date >= $1 AND date <= $2 AND type IN (SELECT code FROM tx_types WHERE category='expense')",
     [startDate, endDate]
   )
   const byCategory = await database.select<MonthlyStats['byCategory']>(
-    "SELECT category_l1, SUM(amount) as total, COUNT(*) as count FROM expenses WHERE date >= $1 AND date <= $2 AND type='expense' GROUP BY category_l1 ORDER BY total DESC",
+    "SELECT category_l1, SUM(amount) as total, COUNT(*) as count FROM expenses WHERE date >= $1 AND date <= $2 AND type IN (SELECT code FROM tx_types WHERE category='expense') GROUP BY category_l1 ORDER BY total DESC",
     [startDate, endDate]
   )
   // 小类聚合：按大类+小类分组，同一大类下按金额从高到低排序
   const byL2 = await database.select<
     { category_l1: string; category_l2: string; total: number; count: number }[]
   >(
-    "SELECT category_l1, category_l2, SUM(amount) as total, COUNT(*) as count FROM expenses WHERE date >= $1 AND date <= $2 AND type='expense' GROUP BY category_l1, category_l2 ORDER BY category_l1 ASC, total DESC",
+    "SELECT category_l1, category_l2, SUM(amount) as total, COUNT(*) as count FROM expenses WHERE date >= $1 AND date <= $2 AND type IN (SELECT code FROM tx_types WHERE category='expense') GROUP BY category_l1, category_l2 ORDER BY category_l1 ASC, total DESC",
     [startDate, endDate]
   )
   const childrenByL1 = new Map<string, MonthlyStats['byCategory'][number]['children']>()
@@ -289,7 +289,7 @@ export async function getTrendData(months: number = 12, categoryL1?: string): Pr
     `SELECT strftime('%Y-%m', date) as month, SUM(amount) as total
      FROM expenses
      WHERE date >= date('now', 'localtime', '-' || CAST($1 AS TEXT) || ' months', 'start of month')
-       AND type='expense'
+       AND type IN (SELECT code FROM tx_types WHERE category='expense')
        ${categoryL1 ? `AND category_l1 = $2` : ''}
      GROUP BY month ORDER BY month ASC`,
     categoryL1 ? [n, categoryL1] : [n]
@@ -331,11 +331,11 @@ function csvField(value: string | number): string {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 
-export function expensesToCSV(expenses: Expense[]): string {
+export function expensesToCSV(expenses: Expense[], txTypes: TxTypeConfig[] = []): string {
   const headers = ['日期', '一级分类', '二级分类', '金额(元)', '支付方式', '备注', '收支类型']
-  const typeLabels: Record<string, string> = { expense: '支出', income: '收入', ignore: '不计' }
+  const typeMap = new Map(txTypes.map((t) => [t.code, t.name]))
   const rows = expenses.map((e) =>
-    [e.date, e.category_l1, e.category_l2, e.amount.toFixed(2), e.payment_method, e.note, typeLabels[e.type] || '支出']
+    [e.date, e.category_l1, e.category_l2, e.amount.toFixed(2), e.payment_method, e.note, typeMap.get(e.type) || '未定义']
       .map(csvField)
       .join(',')
   )
