@@ -93,6 +93,10 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
     return categories.find((c) => c.name === l1)?.children.map((c) => c.name) || []
   }
 
+  const getDefaultSubs = (l1: string) => {
+    return categories.find((c) => c.name === l1)?.children.filter((c) => c.isDefault) || []
+  }
+
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editForm, setEditForm] = useState({ category_l2: '', note: '', amount: '', payment_method: '', type: 'expense' as TransactionType })
   // 进入编辑时聚焦哪个字段（点哪个格子聚焦哪个）
@@ -377,6 +381,43 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
     setTimeout(() => handleAddSubCategoryDirect(date, l1, name, resolvedSub), 0)
   }
 
+  // 点击左栏大类：有默认小类 → 批量添加所有默认小类行；没有 → 建一个空行让用户自选
+  const handleAddCategory = (date: string, l1: string) => {
+    const defaults = getDefaultSubs(l1)
+    if (defaults.length > 0) {
+      // 有默认小类 → 自动生成所有默认小类行
+      const newRows: LocalRow[] = []
+      for (const sub of defaults) {
+        const id = nextTempId.current--
+        newRows.push({
+          tempId: id,
+          date,
+          category_l1: l1,
+          category_l2: sub.name,
+          note: sub.defaultNote || '',
+          amount: sub.defaultAmount || 0,
+          payment_method: sub.defaultPaymentMethod || '',
+          type: sub.defaultType || 'expense',
+        })
+      }
+      setLocalRows((prev) => [...prev, ...newRows])
+      // 聚焦到最后一个小类行
+      const lastSub = defaults[defaults.length - 1]
+      const lastId = newRows[newRows.length - 1].tempId
+      setEditingId(lastId)
+      setFocusField('amount')
+      setEditForm({ category_l2: lastSub.name, note: lastSub.defaultNote || '', amount: (lastSub.defaultAmount || 0).toString(), payment_method: lastSub.defaultPaymentMethod || '', type: lastSub.defaultType || 'expense' })
+    } else {
+      // 没有默认小类 → 和老逻辑一样创建空行让用户选择
+      handleAddSubCategory(date, l1)
+    }
+    // 展开该日期，让用户看到刚添加的记录
+    setExpandedDates((prev) => new Set(prev).add(date))
+    setAddingDate(null)
+    setHoverL1(null)
+    setCustomizingL1(null)
+  }
+
   // 自定义大类：自动保存为正式大类（重名直接复用），再悬停到它以便继续添加小类
   const handleCustomCategorySubmit = async () => {
     const name = customName.trim()
@@ -643,6 +684,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                               key={cat.name}
                               disabled={disabled}
                               onMouseEnter={() => !disabled && setHoverL1(cat.name)}
+                              onClick={() => !disabled && handleAddCategory(date, cat.name)}
                               className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm transition-colors ${
                                 disabled
                                   ? 'text-slate-300 cursor-not-allowed'
