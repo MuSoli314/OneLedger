@@ -334,11 +334,11 @@ function SortableSubCategoryRow({
         {sub.isDefault ? '✓' : ''}
       </button>
 
-      {/* 非日常标记（点击切换，立即保存） */}
+      {/* 非日常标记（点击切换，立即保存）——固定宽度，两态一致不跳动 */}
       {!isEditing && (
         <button
           onClick={(e) => { e.stopPropagation(); onToggleNonDaily() }}
-          className={`flex items-center justify-center px-1.5 h-5 rounded text-[10px] flex-shrink-0 transition-colors ${
+          className={`w-[52px] h-5 flex-shrink-0 flex items-center justify-center rounded-md text-[10px] transition-colors ${
             sub.defaultIsNonDaily
               ? 'bg-slate-200 text-slate-500'
               : 'bg-transparent text-slate-300 border border-dashed border-slate-200 hover:border-slate-300 hover:text-slate-400'
