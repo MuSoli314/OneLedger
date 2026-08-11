@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from 'react'
-import { getDailyTotals, getStatsByRange } from '../data/database'
+import { getDailyTotalsByNonDaily, getStatsByRange } from '../data/database'
 import { eachDay } from '../data/dateUtils'
 import { useCategories } from '../contexts/CategoryContext'
-import { DailyLineChart } from './TrendChart'
-import type { DailyTrendPoint, MonthlyStats } from '../data/types'
+import { DailyDualLineChart } from './TrendChart'
+import type { DailyNonDailyPoint, MonthlyStats } from '../data/types'
 
 interface Props {
   startDate: string
@@ -22,7 +22,7 @@ export default function StatsPanel({ startDate, endDate, dataVersion, title, sel
   const { categories } = useCategories()
   // '' 表示「全天」（所有大类按天汇总）
   const [activeCategory, setActiveCategory] = useState('')
-  const [daily, setDaily] = useState<DailyTrendPoint[]>([])
+  const [daily, setDaily] = useState<DailyNonDailyPoint[]>([])
   const [stats, setStats] = useState<MonthlyStats | null>(null)
   // 分类排行展开状态：默认全部折叠，点击大类可展开查看小类金额
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -38,7 +38,7 @@ export default function StatsPanel({ startDate, endDate, dataVersion, title, sel
   // 当月支出图数据（选中某大类时按大类过滤）。dataVersion 变化时重新查库，
   // 保证编辑/删除/新增记录后图表同步刷新（仅靠 startDate/endDate 不会触发）。
   useEffect(() => {
-    getDailyTotals(startDate, endDate, activeCategory || undefined)
+    getDailyTotalsByNonDaily(startDate, endDate, activeCategory || undefined)
       .then(setDaily)
       .catch(console.error)
   }, [startDate, endDate, activeCategory, dataVersion])
@@ -49,9 +49,9 @@ export default function StatsPanel({ startDate, endDate, dataVersion, title, sel
   }, [startDate, endDate, dataVersion])
 
   // 把区间内无记录的日期补 0，保证折线连续
-  const dailyMap = useMemo(() => new Map(daily.map((d) => [d.date, d.total])), [daily])
+  const dailyMap = useMemo(() => new Map(daily.map((d) => [d.date, d])), [daily])
   const filledDaily = useMemo(
-    () => eachDay(startDate, endDate).map((d) => ({ date: d, total: dailyMap.get(d) ?? 0 })),
+    () => eachDay(startDate, endDate).map((d) => ({ date: d, ...(dailyMap.get(d) ?? { dailyTotal: 0, nonDailyTotal: 0 }) })),
     [startDate, endDate, dailyMap]
   )
 
@@ -63,7 +63,20 @@ export default function StatsPanel({ startDate, endDate, dataVersion, title, sel
       {/* 当月支出图 */}
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
         <div className="flex items-center justify-between gap-2 mb-3">
-          <h3 className="text-sm font-semibold text-slate-700">{title}</h3>
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-semibold text-slate-700">{title}</h3>
+            {/* 图例：日常实线 + 非日常虚线 */}
+            <div className="flex items-center gap-3 text-[11px] text-slate-500">
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block w-4 h-0.5 bg-[#6366f1] rounded" />
+                日常
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block w-4 h-0.5 bg-[#cbd5e1]" style={{ backgroundImage: 'repeating-linear-gradient(90deg, #cbd5e1 0 3px, transparent 3px 6px)' }} />
+                非日常
+              </span>
+            </div>
+          </div>
           <select
             value={activeCategory}
             onChange={(e) => setActiveCategory(e.target.value)}
@@ -75,9 +88,8 @@ export default function StatsPanel({ startDate, endDate, dataVersion, title, sel
             ))}
           </select>
         </div>
-        <DailyLineChart
+        <DailyDualLineChart
           data={filledDaily}
-          color={activeCategory ? '#f59e0b' : '#6366f1'}
           height={200}
         />
       </div>

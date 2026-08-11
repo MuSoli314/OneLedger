@@ -77,3 +77,43 @@ export function DailyLineChart({ data, color, height }: { data: { date: string; 
     />
   )
 }
+
+/** 按天支出双线图（日常实线 + 非日常虚线，日期维度 X 轴显示 MM/DD） */
+export function DailyDualLineChart({ data, height = 200 }: { data: { date: string; dailyTotal: number; nonDailyTotal: number }[]; height?: number }) {
+  if (data.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-48 text-slate-400 text-sm">
+        暂无趋势数据
+      </div>
+    )
+  }
+  const mapped = data.map((d) => ({ key: d.date, 日常支出: d.dailyTotal, 非日常支出: d.nonDailyTotal }))
+  const formatLabel = (v: string) => v.slice(5).replace('-', '/') // YYYY-MM-DD → MM/DD
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload?.length) {
+      return (
+        <div className="bg-white border border-slate-200 shadow-lg rounded-lg px-3 py-2 text-sm">
+          <p className="text-slate-500 mb-1">{formatLabel(label)}</p>
+          {payload.map((p: any) => (
+            <p key={p.dataKey} className="font-medium" style={{ color: p.stroke }}>
+              {p.name}：¥{Number(p.value).toFixed(2)}
+            </p>
+          ))}
+        </div>
+      )
+    }
+    return null
+  }
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <LineChart data={mapped} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+        <XAxis dataKey="key" tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={formatLabel} />
+        <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={(v) => `¥${v}`} />
+        <Tooltip content={<CustomTooltip />} />
+        <Line type="monotone" dataKey="日常支出" name="日常支出" stroke="#6366f1" strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 5 }} />
+        <Line type="monotone" dataKey="非日常支出" name="非日常支出" stroke="#cbd5e1" strokeWidth={2} strokeDasharray="6 3" dot={{ r: 2 }} activeDot={{ r: 4 }} />
+      </LineChart>
+    </ResponsiveContainer>
+  )
+}
