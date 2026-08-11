@@ -48,10 +48,14 @@ export default function StatsPanel({ startDate, endDate, dataVersion, title, sel
     getStatsByRange(startDate, endDate).then(setStats).catch(console.error)
   }, [startDate, endDate, dataVersion])
 
-  // 把区间内无记录的日期补 0，保证折线连续
+  // 把区间内无记录的日期补 0，保证折线连续；全天 = 日常 + 非日常，直接求和
   const dailyMap = useMemo(() => new Map(daily.map((d) => [d.date, d])), [daily])
   const filledDaily = useMemo(
-    () => eachDay(startDate, endDate).map((d) => ({ date: d, ...(dailyMap.get(d) ?? { dailyTotal: 0, nonDailyTotal: 0 }) })),
+    () =>
+      eachDay(startDate, endDate).map((d) => {
+        const day = dailyMap.get(d) ?? { dailyTotal: 0, nonDailyTotal: 0 }
+        return { date: d, dailyTotal: day.dailyTotal, allTotal: day.dailyTotal + day.nonDailyTotal }
+      }),
     [startDate, endDate, dailyMap]
   )
 
@@ -65,15 +69,15 @@ export default function StatsPanel({ startDate, endDate, dataVersion, title, sel
         <div className="flex items-center justify-between gap-2 mb-3">
           <div className="flex items-center gap-3">
             <h3 className="text-sm font-semibold text-slate-700">{title}</h3>
-            {/* 图例：日常实线 + 非日常虚线 */}
+            {/* 图例：全天虚线 + 日常实线 */}
             <div className="flex items-center gap-3 text-[11px] text-slate-500">
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block w-4 h-0.5 bg-[#cbd5e1]" style={{ backgroundImage: 'repeating-linear-gradient(90deg, #cbd5e1 0 3px, transparent 3px 6px)' }} />
+                全天
+              </span>
               <span className="inline-flex items-center gap-1">
                 <span className="inline-block w-4 h-0.5 bg-[#6366f1] rounded" />
                 日常
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <span className="inline-block w-4 h-0.5 bg-[#cbd5e1]" style={{ backgroundImage: 'repeating-linear-gradient(90deg, #cbd5e1 0 3px, transparent 3px 6px)' }} />
-                非日常
               </span>
             </div>
           </div>

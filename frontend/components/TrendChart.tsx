@@ -78,8 +78,8 @@ export function DailyLineChart({ data, color, height }: { data: { date: string; 
   )
 }
 
-/** 按天支出双线图（日常实线 + 非日常虚线，日期维度 X 轴显示 MM/DD） */
-export function DailyDualLineChart({ data, height = 200 }: { data: { date: string; dailyTotal: number; nonDailyTotal: number }[]; height?: number }) {
+/** 按天支出双线图（全天虚线 + 日常实线，日期维度 X 轴显示 MM/DD） */
+export function DailyDualLineChart({ data, height = 200 }: { data: { date: string; allTotal: number; dailyTotal: number }[]; height?: number }) {
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center h-48 text-slate-400 text-sm">
@@ -87,7 +87,7 @@ export function DailyDualLineChart({ data, height = 200 }: { data: { date: strin
       </div>
     )
   }
-  const mapped = data.map((d) => ({ key: d.date, 日常支出: d.dailyTotal, 非日常支出: d.nonDailyTotal }))
+  const mapped = data.map((d) => ({ key: d.date, 全天支出: d.allTotal, 日常支出: d.dailyTotal }))
   const formatLabel = (v: string) => v.slice(5).replace('-', '/') // YYYY-MM-DD → MM/DD
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload?.length) {
@@ -111,8 +111,8 @@ export function DailyDualLineChart({ data, height = 200 }: { data: { date: strin
         <XAxis dataKey="key" tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={formatLabel} />
         <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={(v) => `¥${v}`} />
         <Tooltip content={<CustomTooltip />} />
+        <Line type="monotone" dataKey="全天支出" name="全天支出" stroke="#cbd5e1" strokeWidth={2} strokeDasharray="6 3" dot={{ r: 2 }} activeDot={{ r: 4 }} />
         <Line type="monotone" dataKey="日常支出" name="日常支出" stroke="#6366f1" strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 5 }} />
-        <Line type="monotone" dataKey="非日常支出" name="非日常支出" stroke="#cbd5e1" strokeWidth={2} strokeDasharray="6 3" dot={{ r: 2 }} activeDot={{ r: 4 }} />
       </LineChart>
     </ResponsiveContainer>
   )

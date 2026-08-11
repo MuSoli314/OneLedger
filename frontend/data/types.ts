@@ -81,7 +81,7 @@ export interface DailyTrendPoint {
   total: number
 }
 
-// 按天支出双线聚合点（右栏当月支出图：日常 vs 非日常）
+// 按天支出聚合点（右栏当月支出图数据源：日常/非日常拆分，全天=二者之和）
 export interface DailyNonDailyPoint {
   date: string
   dailyTotal: number
