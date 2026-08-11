@@ -159,3 +159,11 @@ export function getAllSubCategories(): { l1: string; l2: string }[] {
   }
   return result
 }
+
+// 预设为非日常的小类名称（固定开销，无法通过消费习惯控制）。
+// 用于：新装播种时写入默认值 + 老库首次迁移时按名称回填。
+export const NON_DAILY_DEFAULT_NAMES = new Set([
+  '房租', '房贷', '物业费', '水费', '电费',
+  '手机话费', '宽带网络',
+  '保险费', '贷款利息',
+])

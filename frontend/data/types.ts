@@ -39,6 +39,7 @@ export interface Expense {
   payment_method: string
   type: TransactionType
   created_at: string
+  isNonDaily: boolean
 }
 
 export interface ExpenseInput {
@@ -49,6 +50,7 @@ export interface ExpenseInput {
   note: string
   payment_method: string
   type: TransactionType
+  isNonDaily?: boolean
 }
 
 export interface MonthlyStats {
@@ -79,6 +81,13 @@ export interface DailyTrendPoint {
   total: number
 }
 
+// 按天支出双线聚合点（右栏当月支出图：日常 vs 非日常）
+export interface DailyNonDailyPoint {
+  date: string
+  dailyTotal: number
+  nonDailyTotal: number
+}
+
 // 数据库中的分类（带 id）
 export interface CategoryRecord {
   id: number
@@ -98,6 +107,7 @@ export interface SubCategoryRecord {
   default_payment_method: string
   default_amount: number
   default_type: TransactionType
+  default_is_non_daily: number
 }
 
 // 子分类的树形结构（含默认值模板）
@@ -109,6 +119,7 @@ export interface SubCategoryChild {
   defaultPaymentMethod: string
   defaultAmount: number
   defaultType: TransactionType
+  defaultIsNonDaily: boolean
 }
 
 // 前端使用的分类树（含子分类的完整结构）

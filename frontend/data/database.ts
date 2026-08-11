@@ -1,7 +1,7 @@
 import Database from '@tauri-apps/plugin-sql'
 import { isTauri, createWebDbConnection, type DbConnection } from './webDb'
-import type { Expense, ExpenseInput, Budget, TrendPoint, CategoryWithChildren, TransactionType, DailyTrendPoint, MonthlyStats, PaymentMethodConfig, TxTypeConfig, TxCategory } from './types'
-import { categories as defaultCategories, DEFAULT_PAYMENT_METHODS, DEFAULT_TX_TYPES } from './categories'
+import type { Expense, ExpenseInput, Budget, TrendPoint, CategoryWithChildren, TransactionType, DailyTrendPoint, DailyNonDailyPoint, MonthlyStats, PaymentMethodConfig, TxTypeConfig, TxCategory } from './types'
+import { categories as defaultCategories, DEFAULT_PAYMENT_METHODS, DEFAULT_TX_TYPES, NON_DAILY_DEFAULT_NAMES } from './categories'
 
 // 分类筛选的组合键分隔符（小类名在不同大类下可能重名，故用「大类+小类」作唯一键）
 // HomePage / StatsPanel / database 共用此函数，保证键格式一致
@@ -28,9 +28,9 @@ async function connectDb(retries = 2): Promise<DbConnection> {
         ? await Database.load('sqlite:one_ledger.db')
         : await createWebDbConnection()
 
-      // 确保消费记录表存在（含 payment_method 和 type 字段）
+      // 确保消费记录表存在（含 payment_method、type 和 is_non_daily 字段）
       await conn.execute(
-        'CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, amount REAL NOT NULL, category_l1 TEXT NOT NULL, category_l2 TEXT NOT NULL, date TEXT NOT NULL, note TEXT DEFAULT "", payment_method TEXT DEFAULT "", type TEXT DEFAULT "expense", created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)'
+        'CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, amount REAL NOT NULL, category_l1 TEXT NOT NULL, category_l2 TEXT NOT NULL, date TEXT NOT NULL, note TEXT DEFAULT "", payment_method TEXT DEFAULT "", type TEXT DEFAULT "expense", is_non_daily INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)'
       )
 
       // 兼容旧数据库：尝试添加 payment_method 列（已存在则忽略）
@@ -43,6 +43,13 @@ async function connectDb(retries = 2): Promise<DbConnection> {
       // 兼容旧数据库：尝试添加 type 列（已存在则忽略）
       try {
         await conn.execute('ALTER TABLE expenses ADD COLUMN type TEXT DEFAULT "expense"')
+      } catch {
+        // 列已存在，忽略
+      }
+
+      // 兼容旧数据库：尝试添加 is_non_daily 列（已存在则忽略）
+      try {
+        await conn.execute('ALTER TABLE expenses ADD COLUMN is_non_daily INTEGER NOT NULL DEFAULT 0')
       } catch {
         // 列已存在，忽略
       }
@@ -62,6 +69,23 @@ async function connectDb(retries = 2): Promise<DbConnection> {
         } catch { /* 列已存在，忽略 */ }
       }
 
+      // 迁移：给子分类添加默认非日常标记（已存在则忽略）
+      let addedSubNonDaily = false
+      try {
+        await conn.execute('ALTER TABLE subcategories ADD COLUMN default_is_non_daily INTEGER NOT NULL DEFAULT 0')
+        addedSubNonDaily = true
+      } catch { /* 列已存在，忽略 */ }
+
+      // 首次迁移（列刚加上）：按名称回填预设的非日常小类默认值，保证老库「新记的自动带对」
+      if (addedSubNonDaily) {
+        const names = Array.from(NON_DAILY_DEFAULT_NAMES)
+        const placeholders = names.map((_, i) => `$${i + 1}`).join(', ')
+        await conn.execute(
+          `UPDATE subcategories SET default_is_non_daily=1 WHERE name IN (${placeholders})`,
+          names
+        )
+      }
+
       // 检查是否需要播种默认分类
       const catCount = await conn.select<{ cnt: number }[]>('SELECT COUNT(*) as cnt FROM categories')
       if (catCount[0]?.cnt === 0) {
@@ -75,9 +99,10 @@ async function connectDb(retries = 2): Promise<DbConnection> {
           for (let j = 0; j < cat.children.length; j++) {
             // 新装默认支付方式 = 第一个默认支付方式（与界面新增小类兜底行为一致）
             const defaultPay = DEFAULT_PAYMENT_METHODS[0]?.name ?? ''
+            const isNonDailyDefault = NON_DAILY_DEFAULT_NAMES.has(cat.children[j].name) ? 1 : 0
             await conn.execute(
-              'INSERT INTO subcategories (category_id, name, is_default, default_payment_method, sort_order) VALUES ($1, $2, 0, $3, $4)',
-              [catId, cat.children[j].name, defaultPay, j]
+              'INSERT INTO subcategories (category_id, name, is_default, default_payment_method, default_is_non_daily, sort_order) VALUES ($1, $2, 0, $3, $4, $5)',
+              [catId, cat.children[j].name, defaultPay, isNonDailyDefault, j]
             )
           }
         }
@@ -138,8 +163,8 @@ async function connectDb(retries = 2): Promise<DbConnection> {
 export async function addExpense(input: ExpenseInput): Promise<number> {
   const database = await getDb()
   const result = await database.execute(
-    'INSERT INTO expenses (amount, category_l1, category_l2, date, note, payment_method, type) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-    [input.amount, input.category_l1, input.category_l2, input.date, input.note, input.payment_method || '', input.type || 'expense']
+    'INSERT INTO expenses (amount, category_l1, category_l2, date, note, payment_method, type, is_non_daily) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
+    [input.amount, input.category_l1, input.category_l2, input.date, input.note, input.payment_method || '', input.type || 'expense', input.isNonDaily ? 1 : 0]
   )
   return result.lastInsertId as number
 }
@@ -148,8 +173,8 @@ export async function addExpense(input: ExpenseInput): Promise<number> {
 export async function updateExpense(id: number, input: ExpenseInput): Promise<void> {
   const database = await getDb()
   await database.execute(
-    'UPDATE expenses SET amount=$1, category_l1=$2, category_l2=$3, date=$4, note=$5, payment_method=$6, type=$7 WHERE id=$8',
-    [input.amount, input.category_l1, input.category_l2, input.date, input.note, input.payment_method || '', input.type || 'expense', id]
+    'UPDATE expenses SET amount=$1, category_l1=$2, category_l2=$3, date=$4, note=$5, payment_method=$6, type=$7, is_non_daily=$8 WHERE id=$9',
+    [input.amount, input.category_l1, input.category_l2, input.date, input.note, input.payment_method || '', input.type || 'expense', input.isNonDaily ? 1 : 0, id]
   )
 }
 
@@ -218,13 +243,17 @@ export async function listExpenses(params?: {
   const offset = params?.offset ?? 0
 
   const sql = `SELECT * FROM expenses ${where} ORDER BY date DESC, id ASC LIMIT $${idx} OFFSET $${idx + 1}`
-  return database.select<Expense[]>(sql, [...values, limit, offset])
+  const rows = await database.select<(Omit<Expense, 'isNonDaily'> & { is_non_daily: number })[]>(sql, [...values, limit, offset])
+  return rows.map((r) => ({ ...r, isNonDaily: r.is_non_daily === 1 }))
 }
 
 // 获取所有记录（用于导出）
 export async function getAllExpenses(): Promise<Expense[]> {
   const database = await getDb()
-  return database.select<Expense[]>('SELECT * FROM expenses ORDER BY date DESC, id ASC')
+  const rows = await database.select<(Omit<Expense, 'isNonDaily'> & { is_non_daily: number })[]>(
+    'SELECT * FROM expenses ORDER BY date DESC, id ASC'
+  )
+  return rows.map((r) => ({ ...r, isNonDaily: r.is_non_daily === 1 }))
 }
 
 // 按日期范围的每日支出聚合（右栏「当月支出」图；categoryL1 传值则只看该大类）
@@ -238,6 +267,23 @@ export async function getDailyTotals(startDate: string, endDate: string, categor
   }
   const sql = `SELECT date, SUM(amount) as total FROM expenses WHERE ${conditions.join(' AND ')} GROUP BY date ORDER BY date ASC`
   return database.select<DailyTrendPoint[]>(sql, values)
+}
+
+// 按日期范围聚合「日常 / 非日常」两类支出（右栏当月支出图双线数据源）。
+// 与 getDailyTotals 同口径：只统计收支类型为 expense 的记录；categoryL1 传值则只看该大类。
+export async function getDailyTotalsByNonDaily(startDate: string, endDate: string, categoryL1?: string): Promise<DailyNonDailyPoint[]> {
+  const database = await getDb()
+  const conditions = ['date >= $1', 'date <= $2', "type IN (SELECT code FROM tx_types WHERE category='expense')"]
+  const values: string[] = [startDate, endDate]
+  if (categoryL1) {
+    conditions.push('category_l1=$3')
+    values.push(categoryL1)
+  }
+  const sql = `SELECT date,
+    COALESCE(SUM(CASE WHEN is_non_daily=0 THEN amount END), 0) as dailyTotal,
+    COALESCE(SUM(CASE WHEN is_non_daily=1 THEN amount END), 0) as nonDailyTotal
+    FROM expenses WHERE ${conditions.join(' AND ')} GROUP BY date ORDER BY date ASC`
+  return database.select<DailyNonDailyPoint[]>(sql, values)
 }
 
 // 按日期范围的分类排行（替代 getMonthlyStats 的月份版本）。
@@ -344,10 +390,10 @@ function csvField(value: string | number): string {
 }
 
 export function expensesToCSV(expenses: Expense[], txTypes: TxTypeConfig[]): string {
-  const headers = ['日期', '一级分类', '二级分类', '金额(元)', '支付方式', '备注', '收支类型']
+  const headers = ['日期', '一级分类', '二级分类', '金额(元)', '支付方式', '备注', '收支类型', '是否非日常']
   const typeMap = new Map(txTypes.map((t) => [t.code, t.name]))
   const rows = expenses.map((e) =>
-    [e.date, e.category_l1, e.category_l2, e.amount.toFixed(2), e.payment_method, e.note, typeMap.get(e.type) || '未定义']
+    [e.date, e.category_l1, e.category_l2, e.amount.toFixed(2), e.payment_method, e.note, typeMap.get(e.type) || '未定义', e.isNonDaily ? '非日常' : '日常']
       .map(csvField)
       .join(',')
   )
@@ -365,13 +411,13 @@ export async function getCategories(): Promise<CategoryWithChildren[]> {
   >('SELECT * FROM categories ORDER BY sort_order ASC, id ASC')
 
   const subRows = await database.select<
-    { id: number; category_id: number; name: string; is_default: number; default_note: string; default_payment_method: string; default_amount: number; default_type: string; sort_order: number }[]
-  >('SELECT id, category_id, name, is_default, default_note, default_payment_method, default_amount, default_type, sort_order FROM subcategories ORDER BY sort_order ASC, id ASC')
+    { id: number; category_id: number; name: string; is_default: number; default_note: string; default_payment_method: string; default_amount: number; default_type: string; default_is_non_daily: number; sort_order: number }[]
+  >('SELECT id, category_id, name, is_default, default_note, default_payment_method, default_amount, default_type, default_is_non_daily, sort_order FROM subcategories ORDER BY sort_order ASC, id ASC')
 
-  const subMap: Record<number, { id: number; name: string; isDefault: boolean; defaultNote: string; defaultPaymentMethod: string; defaultAmount: number; defaultType: TransactionType }[]> = {}
+  const subMap: Record<number, { id: number; name: string; isDefault: boolean; defaultNote: string; defaultPaymentMethod: string; defaultAmount: number; defaultType: TransactionType; defaultIsNonDaily: boolean }[]> = {}
   for (const s of subRows) {
     if (!subMap[s.category_id]) subMap[s.category_id] = []
-    subMap[s.category_id].push({ id: s.id, name: s.name, isDefault: s.is_default === 1, defaultNote: s.default_note || '', defaultPaymentMethod: s.default_payment_method || '', defaultAmount: s.default_amount || 0, defaultType: (s.default_type as TransactionType) || 'expense' })
+    subMap[s.category_id].push({ id: s.id, name: s.name, isDefault: s.is_default === 1, defaultNote: s.default_note || '', defaultPaymentMethod: s.default_payment_method || '', defaultAmount: s.default_amount || 0, defaultType: (s.default_type as TransactionType) || 'expense', defaultIsNonDaily: s.default_is_non_daily === 1 })
   }
 
   return catRows.map((c) => ({
@@ -440,7 +486,7 @@ export async function toggleSubCategoryDefault(id: number, isDefault: boolean): 
 }
 
 // 更新小类的默认模板值
-export async function updateSubCategoryDefaults(id: number, defaults: { defaultNote?: string; defaultPaymentMethod?: string; defaultAmount?: number; defaultType?: TransactionType }): Promise<void> {
+export async function updateSubCategoryDefaults(id: number, defaults: { defaultNote?: string; defaultPaymentMethod?: string; defaultAmount?: number; defaultType?: TransactionType; defaultIsNonDaily?: boolean }): Promise<void> {
   const database = await getDb()
   const sets: string[] = []
   const vals: (string | number)[] = []
@@ -463,6 +509,11 @@ export async function updateSubCategoryDefaults(id: number, defaults: { defaultN
   if (defaults.defaultType !== undefined) {
     sets.push(`default_type=$${idx}`)
     vals.push(defaults.defaultType)
+    idx++
+  }
+  if (defaults.defaultIsNonDaily !== undefined) {
+    sets.push(`default_is_non_daily=$${idx}`)
+    vals.push(defaults.defaultIsNonDaily ? 1 : 0)
     idx++
   }
   if (sets.length === 0) return

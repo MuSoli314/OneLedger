@@ -26,7 +26,7 @@ interface CategoryContextValue {
   deleteSubCategory: (id: number) => Promise<void>
   updateSubCategoryName: (id: number, name: string) => Promise<void>
   toggleSubCategoryDefault: (id: number, isDefault: boolean) => Promise<void>
-  updateSubCategoryDefaults: (id: number, defaults: { defaultNote?: string; defaultPaymentMethod?: string; defaultAmount?: number; defaultType?: TransactionType }) => Promise<void>
+  updateSubCategoryDefaults: (id: number, defaults: { defaultNote?: string; defaultPaymentMethod?: string; defaultAmount?: number; defaultType?: TransactionType; defaultIsNonDaily?: boolean }) => Promise<void>
   reorderCategories: (orderedIds: number[]) => Promise<void>
   reorderSubCategories: (orderedIds: number[]) => Promise<void>
 }
@@ -93,7 +93,7 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
     await refresh()
   }, [refresh])
 
-  const updateSubCategoryDefaults = useCallback(async (id: number, defaults: { defaultNote?: string; defaultPaymentMethod?: string; defaultAmount?: number; defaultType?: TransactionType }) => {
+  const updateSubCategoryDefaults = useCallback(async (id: number, defaults: { defaultNote?: string; defaultPaymentMethod?: string; defaultAmount?: number; defaultType?: TransactionType; defaultIsNonDaily?: boolean }) => {
     await dbUpdateSubCategoryDefaults(id, defaults)
     await refresh()
   }, [refresh])
