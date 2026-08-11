@@ -6,7 +6,6 @@ import { evaluateExpression } from '../data/calcUtils'
 import { useCategories } from '../contexts/CategoryContext'
 import type { Expense, TransactionType } from '../data/types'
 import { format } from 'date-fns'
-import { localDateString, addDays } from '../data/dateUtils'
 
 interface Props {
   expenses: Expense[]
@@ -62,6 +61,8 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
   const [collapsedMap, setCollapsedMap] = useState<Set<string>>(new Set())
   // 日期折叠 — 默认全部折叠（空 Set = 没有展开的日期）
   const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set())
+  // 连续缺失段（>3 天折叠成「+ 更多」）的展开状态 — 空 Set = 全部折叠
+  const [expandedRuns, setExpandedRuns] = useState<Set<string>>(new Set())
 
   // 自动展开手动添加的日期
   useEffect(() => {
@@ -81,6 +82,19 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
         next.delete(date)
       } else {
         next.add(date)
+      }
+      return next
+    })
+  }
+
+  // 展开/收起连续缺失段（「+ 更多」）
+  const toggleRunCollapse = (runId: string) => {
+    setExpandedRuns(prev => {
+      const next = new Set(prev)
+      if (next.has(runId)) {
+        next.delete(runId)
+      } else {
+        next.add(runId)
       }
       return next
     })
@@ -179,10 +193,10 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
       return
     }
 
-    // 金额必须大于 0（支持算式，如 5*2 自动计算）
+    // 金额不能为负（支持算式，如 5*2 自动计算；0 金额也允许保存，保存后列表标红提示补填）
     const amountNum = evaluateExpression(form.amount)
-    if (amountNum === null || amountNum <= 0) {
-      alert('请填写大于 0 的金额；如想放弃本条，请清空小类')
+    if (amountNum === null || amountNum < 0) {
+      alert('请填写有效的金额（不能为负数）；如想放弃本条，请清空小类')
       return
     }
 
@@ -233,10 +247,10 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
       setFocusField(null)
       return
     }
-    // 金额必须大于 0（支持算式，如 5*2 自动计算）
+    // 金额不能为负（支持算式，如 5*2 自动计算；0 金额也允许保存，保存后列表标红提示补填）
     const amountNum = evaluateExpression(form.amount)
-    if (amountNum === null || amountNum <= 0) {
-      alert('请输入正确的金额（大于 0）')
+    if (amountNum === null || amountNum < 0) {
+      alert('请输入正确的金额（不能为负数）')
       return
     }
     try {
@@ -514,20 +528,62 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
   }
 
   // ===== 缺失日期快捷行 =====
-  // 整月视图（本月/上月/历史月份）下缺失记录的日期，为其中「挨着已有记录 ±1 天」或「每月 1 号」的补「+ 添加」快捷行。
+  // 整月视图（本月/上月/历史月份）下缺失记录的日期：全部缺失日期都补快捷入口。
+  // 按连续（差 1 天）分段：段长 ≤3 天全部显示；段长 >3 天只显示两端，中间折叠成「+ 更多（N 天）」。
   // 已有日期集合 = 真实记录 + 本地临时行 + 手动添加的空白日期（groupedByDate 的所有键）
   const presentSet = new Set(Object.keys(groupedByDate))
   // 缺失日期里，排除已是空白日期（extraDates 已单独渲染成日期分组）的，避免重复
-  const quickRows: string[] = (missingDates || []).filter((d) => {
-    if (presentSet.has(d)) return false // 已有分组（真实/空白日期）不重复补快捷
-    if (d.endsWith('-01')) return true // 每月 1 号固定补
-    const prev = localDateString(addDays(new Date(`${d}T00:00:00`), -1))
-    const next = localDateString(addDays(new Date(`${d}T00:00:00`), 1))
-    return presentSet.has(prev) || presentSet.has(next)
-  }).sort((a, b) => b.localeCompare(a))
-  const quickSet = new Set(quickRows)
-  // 只把需要补快捷行的缺失日期并入分组，参与倒序排序与渲染；其余缺失日期不渲染
-  for (const d of quickRows) {
+  const missingList = (missingDates || [])
+    .filter((d) => !presentSet.has(d))
+    .sort((a, b) => b.localeCompare(a)) // 倒序（列表日期整体倒序）
+  // 把缺失日期切成连续段：runs[i] = 该段按时间升序排列的日期数组
+  const runs: string[][] = []
+  for (const d of missingList) {
+    if (runs.length === 0) {
+      runs.push([d])
+    } else {
+      const last = runs[runs.length - 1]
+      const gap = Math.abs(new Date(`${last[last.length - 1]}T00:00:00`).getTime() - new Date(`${d}T00:00:00`).getTime())
+      if (gap === 86400000) {
+        // d 与当前段尾部正好差 1 天，继续当前段
+        last.push(d)
+      } else {
+        runs.push([d])
+      }
+    }
+  }
+  // 段内升序 → 每段内部按时间升序排列；但段本身按「段的起点日期」降序排列（与列表倒序一致）
+  runs.forEach((r) => r.sort((a, b) => a.localeCompare(b)))
+  runs.sort((a, b) => b[b.length - 1].localeCompare(a[a.length - 1]))
+  // 每段折叠时只显示两端（max = 段内最大日期、min = 段内最小日期）；展开时显示全部
+  // runId 用于标识段的展开状态
+  const runEnds: { id: string, min: string, max: string, dates: string[], expanded: boolean }[] = []
+  for (const r of runs) {
+    if (r.length <= 3) {
+      // 段长 ≤ 3：全部显示（无需折叠）
+      runEnds.push({ id: r[0], min: r[0], max: r[r.length - 1], dates: r, expanded: true })
+    } else {
+      // 段长 > 3：只显示两端，中间折叠成「+ 更多」
+      const runId = `${r[0]}~${r[r.length - 1]}`
+      runEnds.push({ id: runId, min: r[0], max: r[r.length - 1], dates: r, expanded: expandedRuns.has(runId) })
+    }
+  }
+  const quickDates = new Set<string>()
+  // 折叠段：min 日期 → 该段「+ 更多（N 天）」信息；展开段：min 日期 → 该段「收起」信息
+  const foldedRuns = new Map<string, { runId: string; count: number }>()
+  const expandedRunMins = new Map<string, { runId: string }>()
+  for (const r of runEnds) {
+    if (r.expanded) {
+      for (const d of r.dates) quickDates.add(d)
+      if (r.dates.length > 3) expandedRunMins.set(r.min, { runId: r.id })
+    } else {
+      quickDates.add(r.min)
+      quickDates.add(r.max)
+      if (r.dates.length > 3) foldedRuns.set(r.min, { runId: r.id, count: r.dates.length - 2 })
+    }
+  }
+  // 只把要显示的快捷日期并入分组，参与倒序排序与渲染；其余（被折叠的中间日期）不渲染
+  for (const d of quickDates) {
     if (!groupedByDate[d]) groupedByDate[d] = []
   }
 
@@ -537,7 +593,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
         // 按日期倒序排列（本地临时行/手动添加的日期也要参与排序）
         .sort(([a], [b]) => b.localeCompare(a))
         .map(([date, items]) => {
-        const isQuickRow = quickSet.has(date)
+        const isQuickRow = quickDates.has(date)
         const dayTotal = items.reduce((sum, e) => sum + (txTypeByCode.get(e.type)?.category === 'ignore' ? 0 : e.amount), 0)
 
         // 在该日内按一级分类分组
@@ -551,18 +607,46 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
 
         return (
           <div key={date}>
-            {/* 缺失日期：只显示「+ 添加」快捷行（挨着已有日期或每月 1 号），不显示日期标题 */}
+            {/* 缺失日期：只显示快捷行（「+ 添加」；折叠段还配「+ 更多（N 天）」/「收起」），不显示日期标题 */}
             {isQuickRow && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onAddDate?.(date) }}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-dashed border-primary/40 text-primary hover:bg-primary/5 transition-colors text-sm"
-                title="添加此日期"
-              >
-                <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                <span>添加 {formatDate(date)}</span>
-              </button>
+              <div className="space-y-1.5">
+                {/* 折叠段的最早日期前：该段折叠为「+ 更多（N 天）」，点击展开中间所有日期 */}
+                {foldedRuns.has(date) && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); toggleRunCollapse(foldedRuns.get(date)!.runId) }}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 transition-colors text-sm"
+                    title="展开中间所有日期"
+                  >
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                    <span>+ 更多（{foldedRuns.get(date)!.count} 天）</span>
+                  </button>
+                )}
+                <button
+                  onClick={(e) => { e.stopPropagation(); onAddDate?.(date) }}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-dashed border-primary/40 text-primary hover:bg-primary/5 transition-colors text-sm"
+                  title="添加此日期"
+                >
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  <span>添加 {formatDate(date)}</span>
+                </button>
+                {/* 展开段的最早日期下：「收起」，点击折叠回「+ 更多（N 天）」 */}
+                {expandedRunMins.has(date) && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); toggleRunCollapse(expandedRunMins.get(date)!.runId) }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 rounded-xl border border-dashed border-slate-300 text-slate-400 hover:bg-slate-50 transition-colors text-sm"
+                    title="折叠中间日期"
+                  >
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                    </svg>
+                    <span>收起</span>
+                  </button>
+                )}
+              </div>
             )}
             {/* 日期标题 + 每日小计 + 添加按钮 — 整行可点击展开/折叠（缺失日期不显示标题） */}
             {!isQuickRow && (
@@ -851,6 +935,8 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                       const isEditing = editingId === expense.id
                       const isLocal = expense.id < 0
                       const rowTx = txTypeByCode.get(expense.type)
+                      // 金额为 0 的记录标红提醒（非 ignore 类型；编辑态仍走 indigo 编辑样式）
+                      const isZeroAmount = expense.amount === 0 && rowTx?.category !== 'ignore'
                       return (
                         <div
                           key={expense.id}
@@ -858,6 +944,8 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                           className={`flex items-center gap-2 px-2 pl-2 py-1 text-base transition-colors ${
                             isEditing
                               ? 'bg-indigo-50 border-l-2 border-l-primary'
+                              : isZeroAmount
+                              ? 'bg-red-100 hover:bg-red-200 border-l-2 border-l-red-500 cursor-pointer group'
                               : rowTx?.category === 'ignore'
                               ? 'bg-slate-300 hover:bg-slate-400 cursor-pointer group'
                               : expense.isNonDaily

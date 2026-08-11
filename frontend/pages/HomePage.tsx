@@ -234,11 +234,13 @@ export default function HomePage() {
     loadData()
   }
 
-  // 保存某一天：有默认小类的分类自动存成记录，没有默认小类的只加空白日期。
-  // 右下角弹窗的「添加」和顶部快捷按钮共用此函数，保证两个入口行为一致。
+  // 保存某一天：只处理勾选了「默认」的大类，其下默认小类自动存成记录；
+  // 没有默认小类的大类只加空白日期。右下角弹窗的「添加」和顶部快捷按钮共用此函数。
   const saveNewDate = async (date: string) => {
     let savedAny = false
     for (const cat of categories) {
+      // 未勾选默认的大类不参与「添加某天」自动记账
+      if (!cat.isDefault) continue
       const defaults = cat.children.filter((c) => c.isDefault)
       for (const sub of defaults) {
         try {

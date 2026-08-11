@@ -56,11 +56,16 @@ async function connectDb(retries = 2): Promise<DbConnection> {
 
       // 分类表
       await conn.execute(
-        'CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, icon TEXT NOT NULL DEFAULT "📂", sort_order INTEGER NOT NULL DEFAULT 0)'
+        'CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, icon TEXT NOT NULL DEFAULT "📂", sort_order INTEGER NOT NULL DEFAULT 0, is_default INTEGER NOT NULL DEFAULT 1)'
       )
       await conn.execute(
         'CREATE TABLE IF NOT EXISTS subcategories (id INTEGER PRIMARY KEY AUTOINCREMENT, category_id INTEGER NOT NULL, name TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE)'
       )
+
+      // 迁移：给大类添加默认标记（老库默认全勾选，保持「添加某天」行为不变）
+      try {
+        await conn.execute('ALTER TABLE categories ADD COLUMN is_default INTEGER NOT NULL DEFAULT 1')
+      } catch { /* 列已存在，忽略 */ }
 
       // 迁移：给子分类添加默认备注/支付方式/金额/类型字段
       for (const col of ['default_note TEXT DEFAULT ""', 'default_payment_method TEXT DEFAULT ""', 'default_amount REAL DEFAULT 0', 'default_type TEXT DEFAULT "expense"']) {
@@ -93,7 +98,7 @@ async function connectDb(retries = 2): Promise<DbConnection> {
         for (let i = 0; i < defaultCategories.length; i++) {
           const cat = defaultCategories[i]
           const result = await conn.execute(
-            'INSERT INTO categories (name, icon, sort_order) VALUES ($1, $2, $3)',
+            'INSERT INTO categories (name, icon, sort_order, is_default) VALUES ($1, $2, $3, 1)',
             [cat.name, cat.icon, i]
           )
           const catId = result.lastInsertId as number
@@ -408,7 +413,7 @@ export function expensesToCSV(expenses: Expense[], txTypes: TxTypeConfig[]): str
 export async function getCategories(): Promise<CategoryWithChildren[]> {
   const database = await getDb()
   const catRows = await database.select<
-    { id: number; name: string; icon: string; sort_order: number }[]
+    { id: number; name: string; icon: string; sort_order: number; is_default: number }[]
   >('SELECT * FROM categories ORDER BY sort_order ASC, id ASC')
 
   const subRows = await database.select<
@@ -425,6 +430,7 @@ export async function getCategories(): Promise<CategoryWithChildren[]> {
     id: c.id,
     name: c.name,
     icon: c.icon,
+    isDefault: c.is_default === 1,
     children: subMap[c.id] || [],
   }))
 }
@@ -456,6 +462,12 @@ export async function updateCategoryName(id: number, name: string): Promise<void
 export async function updateCategoryIcon(id: number, icon: string): Promise<void> {
   const database = await getDb()
   await database.execute('UPDATE categories SET icon=$1 WHERE id=$2', [icon, id])
+}
+
+// 切换大类是否默认（是否参与「添加某天」自动记账）
+export async function toggleCategoryDefault(id: number, isDefault: boolean): Promise<void> {
+  const database = await getDb()
+  await database.execute('UPDATE categories SET is_default=$1 WHERE id=$2', [isDefault ? 1 : 0, id])
 }
 
 // 新增小类

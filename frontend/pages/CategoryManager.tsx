@@ -66,10 +66,11 @@ function SortableCategoryRow({
   onCloseIconPicker,
   onDelete,
   onAddSub,
+  onToggleDefault,
   children,
 }: {
   id: string
-  cat: { id: number; name: string; icon: string; children: { isDefault: boolean }[] }
+  cat: { id: number; name: string; icon: string; isDefault: boolean; children: { isDefault: boolean }[] }
   isExpanded: boolean
   editingCatId: number | null
   editingCatName: string
@@ -84,6 +85,7 @@ function SortableCategoryRow({
   onCloseIconPicker: () => void
   onDelete: () => void
   onAddSub: () => void
+  onToggleDefault: () => void
   children: React.ReactNode
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
@@ -119,6 +121,19 @@ function SortableCategoryRow({
       <div className="flex items-center gap-1 px-4 py-3 pl-2">
         {/* 拖拽手柄 */}
         <DragHandle {...attributes} {...listeners} />
+
+        {/* 默认大类开关：勾选后参与「添加某天」自动记账 */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleDefault() }}
+          className={`w-5 h-5 flex items-center justify-center rounded-md text-xs transition-colors flex-shrink-0 ${
+            cat.isDefault
+              ? 'bg-primary text-white'
+              : 'bg-slate-200 text-transparent hover:bg-slate-300'
+          }`}
+          title={cat.isDefault ? '取消默认（添加某天时不再自动记账该大类）' : '设为默认（添加某天时自动记账该大类）'}
+        >
+          {cat.isDefault ? '✓' : ''}
+        </button>
 
         <button
           onClick={onToggleExpanded}
@@ -518,6 +533,7 @@ export default function CategoryManager() {
     deleteCategory,
     updateCategoryName,
     updateCategoryIcon,
+    toggleCategoryDefault,
     addSubCategory,
     deleteSubCategory,
     toggleSubCategoryDefault,
@@ -801,6 +817,11 @@ export default function CategoryManager() {
         <span className="text-xs text-slate-400">{categories.length} 个大类</span>
       </div>
 
+      {/* 说明 */}
+      <div className="text-xs text-slate-400 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 leading-relaxed">
+        大类前勾选 ✓ = 该大类参与「添加某天」自动记账；未勾选的大类不会自动添加。小类前勾选 ✓ = 该小类是默认小类（记账时自动带出）。
+      </div>
+
       {/* 分类列表 */}
       {categories.length === 0 ? (
         <div className="text-center py-12 text-slate-400 text-base">暂无分类，请在下方添加</div>
@@ -838,6 +859,7 @@ export default function CategoryManager() {
                     onCloseIconPicker={() => setIconPickerCatId(null)}
                     onDelete={() => setDeleteTarget({ type: 'category', id: cat.id, name: cat.name })}
                     onAddSub={() => handleAddSubClick(cat.id)}
+                    onToggleDefault={() => toggleCategoryDefault(cat.id, !cat.isDefault)}
                   >
                     {/* 小类列表 */}
                     {cat.children.length === 0 && pendingAddCatId !== cat.id ? (

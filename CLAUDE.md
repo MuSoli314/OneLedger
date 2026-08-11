@@ -105,6 +105,7 @@ Claude Code 为本项目生成的**记忆文件**和**工作文档**存放在项
 - [x] 首页改版（两栏仪表盘布局 + 时间范围联动：近一周 / 近一月 / 本月 / 历史月份）
 - [x] 按分类筛选（分类排行勾选大类/小类复选筛选记录列表，与支付方式筛选叠加生效）
 - [x] 日常 / 非日常支出区分（小类默认标记 + 记录行内切换 + 当月支出图双线）
+- [x] 默认大类开关（大类前勾选 ✓ = 参与「添加某天」自动记账；「添加某天」只按勾选的大类生成其默认小类记录，老库默认全勾选，行为不变）
 
 ### ✅ 双形态：桌面版 + 网页版（已完成）
 - [x] 网页版数据层（浏览器内运行 SQLite + IndexedDB 本地持久化，`webDb.ts`）
@@ -281,7 +282,7 @@ CategoryContext.tsx         ←── 拉取分类树，全局共享避免重复
 | 表名 | 关键字段 | 说明 |
 |------|---------|------|
 | `expenses` | `id, amount, category_l1, category_l2, date, note, payment_method, created_at` | 消费记录 |
-| `categories` | `id, name (UNIQUE), icon, sort_order` | 一级分类大类 |
+| `categories` | `id, name (UNIQUE), icon, sort_order, is_default` | 一级分类大类（is_default 控制是否参与「添加某天」自动记账） |
 | `subcategories` | `id, category_id (FK), name, is_default, sort_order, default_note, default_payment_method, default_amount` | 二级分类小类 |
 | `budgets` | `id, month (UNIQUE), amount` | 月度预算 |
 

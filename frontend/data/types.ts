@@ -94,6 +94,7 @@ export interface CategoryRecord {
   name: string
   icon: string
   sort_order: number
+  is_default: boolean
 }
 
 // 数据库中的子分类
@@ -127,5 +128,7 @@ export interface CategoryWithChildren {
   id: number
   name: string
   icon: string
+  /** 大类是否参与「添加某天」自动记账（勾选后，其下默认小类才会被自动添加） */
+  isDefault: boolean
   children: SubCategoryChild[]
 }
