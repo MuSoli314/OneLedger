@@ -241,6 +241,7 @@ function SortableSubCategoryRow({
   subEditRef,
   focusField,
   onToggleDefault,
+  onToggleNonDaily,
   onStartEdit,
   onSubEditFormChange,
   onSubEditKeyDown,
@@ -248,18 +249,19 @@ function SortableSubCategoryRow({
   onDelete,
 }: {
   id: string
-  sub: { id: number; name: string; isDefault: boolean; defaultNote: string; defaultPaymentMethod: string; defaultAmount: number; defaultType: TransactionType }
+  sub: { id: number; name: string; isDefault: boolean; defaultNote: string; defaultPaymentMethod: string; defaultAmount: number; defaultType: TransactionType; defaultIsNonDaily: boolean }
   isEditing: boolean
   editingSubId: number | null
-  subEditForm: { subName: string; defaultNote: string; defaultPaymentMethod: string; defaultAmount: string; defaultType: TransactionType }
+  subEditForm: { subName: string; defaultNote: string; defaultPaymentMethod: string; defaultAmount: string; defaultType: TransactionType; defaultIsNonDaily: boolean }
   subEditRef: React.RefObject<HTMLDivElement | null>
   focusField: EditField | null
   onToggleDefault: () => void
+  onToggleNonDaily: () => void
   onStartEdit: (field?: EditField) => void
-  onSubEditFormChange: (form: { subName: string; defaultNote: string; defaultPaymentMethod: string; defaultAmount: string; defaultType: TransactionType }) => void
+  onSubEditFormChange: (form: { subName: string; defaultNote: string; defaultPaymentMethod: string; defaultAmount: string; defaultType: TransactionType; defaultIsNonDaily: boolean }) => void
   onSubEditKeyDown: (e: React.KeyboardEvent) => void
   /** 下拉选择后自动保存（选完即存并退出编辑） */
-  onAutoSave: (form: { subName: string; defaultNote: string; defaultPaymentMethod: string; defaultAmount: string; defaultType: TransactionType }) => void
+  onAutoSave: (form: { subName: string; defaultNote: string; defaultPaymentMethod: string; defaultAmount: string; defaultType: TransactionType; defaultIsNonDaily: boolean }) => void
   onDelete: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
@@ -332,6 +334,21 @@ function SortableSubCategoryRow({
         {sub.isDefault ? '✓' : ''}
       </button>
 
+      {/* 非日常标记（点击切换，立即保存） */}
+      {!isEditing && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggleNonDaily() }}
+          className={`flex items-center justify-center w-8 h-5 rounded text-[10px] flex-shrink-0 transition-colors ${
+            sub.defaultIsNonDaily
+              ? 'bg-slate-200 text-slate-500'
+              : 'bg-transparent text-slate-300 border border-dashed border-slate-200 hover:border-slate-300 hover:text-slate-400'
+          }`}
+          title={sub.defaultIsNonDaily ? '默认非日常（点击改为日常）' : '默认日常（点击改为非日常）'}
+        >
+          {sub.defaultIsNonDaily ? '非' : '日'}
+        </button>
+      )}
+
       {/* 小类名称 */}
       {isEditing ? (
         <input
@@ -398,6 +415,16 @@ function SortableSubCategoryRow({
                 onAutoSave(newForm)
               }}
             />
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); const f = { ...subEditForm, defaultIsNonDaily: !subEditForm.defaultIsNonDaily }; onSubEditFormChange(f); onAutoSave(f) }}
+              className={`flex items-center gap-1 px-2 h-8 rounded-lg text-[11px] flex-shrink-0 transition-colors ${
+                subEditForm.defaultIsNonDaily ? 'bg-slate-200 text-slate-600' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+              }`}
+              title="切换默认是否为非日常支出"
+            >
+              {subEditForm.defaultIsNonDaily ? '非日常' : '日常'}
+            </button>
             <div className="flex-1 min-w-0">
               <input
                 type="text"
@@ -525,7 +552,7 @@ export default function CategoryManager() {
 
   // 编辑小类（名称 + 默认模板）
   const [editingSubId, setEditingSubId] = useState<number | null>(null)
-  const [subEditForm, setSubEditForm] = useState({ subName: '', defaultNote: '', defaultPaymentMethod: '', defaultAmount: '', defaultType: 'expense' as TransactionType })
+  const [subEditForm, setSubEditForm] = useState({ subName: '', defaultNote: '', defaultPaymentMethod: '', defaultAmount: '', defaultType: 'expense' as TransactionType, defaultIsNonDaily: false })
   // 进入编辑时聚焦哪个字段（点哪个格子聚焦哪个）
   const [focusField, setFocusField] = useState<EditField | null>(null)
   const subEditRef = useRef<HTMLDivElement>(null)
@@ -552,6 +579,7 @@ export default function CategoryManager() {
           defaultPaymentMethod: form.defaultPaymentMethod || paymentMethods[0]?.name || '',
           defaultAmount: evaluateExpression(form.defaultAmount) || 0,
           defaultType: form.defaultType || txTypes[0]?.code || 'expense',
+          defaultIsNonDaily: form.defaultIsNonDaily,
         })
       }
       setPendingAddCatId(null)
@@ -566,6 +594,7 @@ export default function CategoryManager() {
         defaultPaymentMethod: form.defaultPaymentMethod,
         defaultAmount: evaluateExpression(form.defaultAmount) || 0,
         defaultType: form.defaultType,
+        defaultIsNonDaily: form.defaultIsNonDaily,
       })
     }
     // 保存期间用户可能已切到别的行/新增行，避免误关
@@ -574,6 +603,11 @@ export default function CategoryManager() {
       setFocusField(null)
     }
   }, [pendingAddCatId, addSubCategory, updateSubCategoryName, updateSubCategoryDefaults, paymentMethods, txTypes])
+
+  // 切换小类默认是否为非日常（非日常 ≠ 默认小类，独立保存）
+  const handleToggleSubNonDaily = useCallback(async (id: number, current: boolean) => {
+    await updateSubCategoryDefaults(id, { defaultIsNonDaily: !current })
+  }, [updateSubCategoryDefaults])
 
   // 点击行外自动保存
   useEffect(() => {
@@ -643,7 +677,7 @@ export default function CategoryManager() {
     }
   }
 
-  const startEditSub = (sub: { id: number; name: string; isDefault: boolean; defaultNote: string; defaultPaymentMethod: string; defaultAmount: number; defaultType: TransactionType }, field: EditField = 'subName') => {
+  const startEditSub = (sub: { id: number; name: string; isDefault: boolean; defaultNote: string; defaultPaymentMethod: string; defaultAmount: number; defaultType: TransactionType; defaultIsNonDaily: boolean }, field: EditField = 'subName') => {
     setEditingSubId(sub.id)
     setFocusField(field)
     setSubEditForm({
@@ -652,6 +686,7 @@ export default function CategoryManager() {
       defaultPaymentMethod: sub.defaultPaymentMethod || '',
       defaultAmount: sub.defaultAmount ? sub.defaultAmount.toString() : '',
       defaultType: sub.defaultType || 'expense',
+      defaultIsNonDaily: sub.defaultIsNonDaily,
     })
   }
 
@@ -666,6 +701,7 @@ export default function CategoryManager() {
       defaultPaymentMethod: paymentMethods[0]?.name ?? '',
       defaultAmount: '',
       defaultType: txTypes[0]?.code ?? 'expense',
+      defaultIsNonDaily: false,
     })
   }
 
@@ -824,6 +860,7 @@ export default function CategoryManager() {
                               subEditRef={subEditRef}
                               focusField={focusField}
                               onToggleDefault={() => toggleSubCategoryDefault(sub.id, !sub.isDefault)}
+                              onToggleNonDaily={() => handleToggleSubNonDaily(sub.id, sub.defaultIsNonDaily)}
                               onStartEdit={(field) => !isEditing && startEditSub(sub, field)}
                               onSubEditFormChange={setSubEditForm}
                               onSubEditKeyDown={handleSubEditKeyDown}
@@ -881,6 +918,16 @@ export default function CategoryManager() {
                               className="w-[80px] flex-shrink-0"
                               onChange={(v) => setSubEditForm({ ...subEditForm, defaultType: v as TransactionType })}
                             />
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setSubEditForm({ ...subEditForm, defaultIsNonDaily: !subEditForm.defaultIsNonDaily }) }}
+                              className={`flex items-center gap-1 px-2 h-8 rounded-lg text-[11px] flex-shrink-0 transition-colors ${
+                                subEditForm.defaultIsNonDaily ? 'bg-slate-200 text-slate-600' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                              }`}
+                              title="切换默认是否为非日常支出"
+                            >
+                              {subEditForm.defaultIsNonDaily ? '非日常' : '日常'}
+                            </button>
                             <div className="flex-1 min-w-0">
                               <input
                                 type="text"
