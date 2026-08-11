@@ -76,7 +76,8 @@ async function connectDb(retries = 2): Promise<DbConnection> {
         addedSubNonDaily = true
       } catch { /* 列已存在，忽略 */ }
 
-      // 首次迁移（列刚加上）：按名称回填预设的非日常小类默认值，保证老库「新记的自动带对」
+      // 首次迁移（列刚加上）：按名称回填预设的非日常小类默认值，保证老库「新记的自动带对」。
+      // 只回填一次、只置 1 不覆盖 0 —— 用户手动取消非日常后重启不会被改回。
       if (addedSubNonDaily) {
         const names = Array.from(NON_DAILY_DEFAULT_NAMES)
         const placeholders = names.map((_, i) => `$${i + 1}`).join(', ')
