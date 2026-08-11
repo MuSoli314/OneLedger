@@ -220,7 +220,7 @@ export default function HomePage() {
     }
   }
 
-  const handleUpdate = async (id: number, category_l2: string, note: string, amount: number, payment_method: string, type: TransactionType = 'expense') => {
+  const handleUpdate = async (id: number, category_l2: string, note: string, amount: number, payment_method: string, type: TransactionType = 'expense', isNonDaily: boolean = false) => {
     await updateExpense(id, {
       amount,
       category_l1: expenses.find((e) => e.id === id)?.category_l1 || '',
@@ -229,6 +229,7 @@ export default function HomePage() {
       note,
       payment_method,
       type,
+      isNonDaily,
     })
     loadData()
   }
@@ -249,6 +250,7 @@ export default function HomePage() {
             note: sub.defaultNote || '',
             payment_method: sub.defaultPaymentMethod || '',
             type: sub.defaultType || 'expense',
+            isNonDaily: sub.defaultIsNonDaily,
           })
           savedAny = true
         } catch (err) {

@@ -11,7 +11,7 @@ import { localDateString, addDays } from '../data/dateUtils'
 interface Props {
   expenses: Expense[]
   onDelete: (expense: Expense) => void
-  onUpdate: (id: number, category_l2: string, note: string, amount: number, payment_method: string, type: TransactionType) => Promise<void>
+  onUpdate: (id: number, category_l2: string, note: string, amount: number, payment_method: string, type: TransactionType, isNonDaily: boolean) => Promise<void>
   onRefresh?: () => void
   extraDates?: string[]
   /** 整月视图下缺失记录的日期（本月/上月/历史月份）— 列表里为这些日期补「+ 添加」快捷行 */
@@ -33,6 +33,7 @@ interface LocalRow {
   amount: number
   payment_method: string
   type: TransactionType
+  isNonDaily: boolean
 }
 
 /** 行内编辑可聚焦的字段 */
@@ -98,7 +99,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
   }
 
   const [editingId, setEditingId] = useState<number | null>(null)
-  const [editForm, setEditForm] = useState({ category_l2: '', note: '', amount: '', payment_method: '', type: 'expense' as TransactionType })
+  const [editForm, setEditForm] = useState({ category_l2: '', note: '', amount: '', payment_method: '', type: 'expense' as TransactionType, isNonDaily: false })
   // 进入编辑时聚焦哪个字段（点哪个格子聚焦哪个）
   const [focusField, setFocusField] = useState<EditField | null>(null)
   // 编辑控件 refs，按 focusField 聚焦
@@ -154,6 +155,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
       amount: expense.amount.toString(),
       payment_method: expense.payment_method || '',
       type: expense.type || 'expense',
+      isNonDaily: expense.isNonDaily,
     })
   }
 
@@ -194,6 +196,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
         note: form.note,
         payment_method: form.payment_method || '',
         type: form.type || 'expense',
+        isNonDaily: form.isNonDaily,
       })
       setLocalRows((prev) => prev.filter((r) => r.tempId !== tempId))
       // 保存期间用户可能已切到别的行，避免误关
@@ -223,7 +226,8 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
       form.note === expense.note &&
       evaluateExpression(form.amount) === expense.amount &&
       (form.payment_method || '') === (expense.payment_method || '') &&
-      (form.type || 'expense') === (expense.type || 'expense')
+      (form.type || 'expense') === (expense.type || 'expense') &&
+      form.isNonDaily === expense.isNonDaily
     ) {
       setEditingId(null)
       setFocusField(null)
@@ -236,7 +240,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
       return
     }
     try {
-      await onUpdate(expense.id, form.category_l2, form.note, amountNum, form.payment_method || '', form.type || 'expense')
+      await onUpdate(expense.id, form.category_l2, form.note, amountNum, form.payment_method || '', form.type || 'expense', form.isNonDaily)
       // 保存期间用户可能已切到别的行，避免误关
       if (editingIdRef.current === id) {
         setEditingId(null)
@@ -321,7 +325,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
   }, [addingDate])
 
   // 直接添加指定小类（联动面板右侧点击具体小类）— 只加这一条，带默认值预填
-  const handleAddSubCategoryDirect = (date: string, l1: string, l2: string, resolvedSub?: { defaultNote: string; defaultPaymentMethod: string; defaultAmount: number; defaultType: TransactionType }) => {
+  const handleAddSubCategoryDirect = (date: string, l1: string, l2: string, resolvedSub?: { defaultNote: string; defaultPaymentMethod: string; defaultAmount: number; defaultType: TransactionType; defaultIsNonDaily: boolean }) => {
     const cat = categories.find((c) => c.name === l1)
     // 自定义提交时分类表可能还没刷新到，用已解析的小类兜底
     const sub = resolvedSub ?? cat?.children.find((c) => c.name === l2)
@@ -335,6 +339,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
       amount: sub?.defaultAmount || 0,
       payment_method: sub?.defaultPaymentMethod || '',
       type: sub?.defaultType || 'expense',
+      isNonDaily: sub?.defaultIsNonDaily || false,
     }
     setLocalRows((prev) => [...prev, newRow])
     setEditingId(id)
@@ -346,6 +351,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
       amount: (sub?.defaultAmount || 0).toString(),
       payment_method: sub?.defaultPaymentMethod || '',
       type: sub?.defaultType || 'expense',
+      isNonDaily: sub?.defaultIsNonDaily || false,
     })
     // 展开该日期，让用户看到刚添加的记录
     setExpandedDates((prev) => new Set(prev).add(date))
@@ -374,6 +380,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
       defaultPaymentMethod: '',
       defaultAmount: 0,
       defaultType: 'expense' as TransactionType,
+      defaultIsNonDaily: false,
     }
     setCustomName('')
     setCustomizingL1(null)
@@ -398,6 +405,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
           amount: sub.defaultAmount || 0,
           payment_method: sub.defaultPaymentMethod || '',
           type: sub.defaultType || 'expense',
+          isNonDaily: sub.defaultIsNonDaily,
         })
       }
       setLocalRows((prev) => [...prev, ...newRows])
@@ -406,7 +414,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
       const lastId = newRows[newRows.length - 1].tempId
       setEditingId(lastId)
       setFocusField('amount')
-      setEditForm({ category_l2: lastSub.name, note: lastSub.defaultNote || '', amount: (lastSub.defaultAmount || 0).toString(), payment_method: lastSub.defaultPaymentMethod || '', type: lastSub.defaultType || 'expense' })
+      setEditForm({ category_l2: lastSub.name, note: lastSub.defaultNote || '', amount: (lastSub.defaultAmount || 0).toString(), payment_method: lastSub.defaultPaymentMethod || '', type: lastSub.defaultType || 'expense', isNonDaily: lastSub.defaultIsNonDaily })
     } else {
       // 没有默认小类 → 和老逻辑一样创建空行让用户选择
       handleAddSubCategory(date, l1)
@@ -451,12 +459,13 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
       amount: 0,
       payment_method: '',
       type: defaultExpenseCode || 'expense',
+      isNonDaily: false,
     }
     setLocalRows((prev) => [...prev, newRow])
     // 自动进入编辑
     setEditingId(id)
     setFocusField('category_l2')
-    setEditForm({ category_l2: '', note: '', amount: '0', payment_method: '', type: defaultExpenseCode || 'expense' })
+    setEditForm({ category_l2: '', note: '', amount: '0', payment_method: '', type: defaultExpenseCode || 'expense', isNonDaily: false })
   }
 
   if (expenses.length === 0 && localRows.length === 0 && (!extraDates || extraDates.length === 0) && (!missingDates || missingDates.length === 0)) {
@@ -494,6 +503,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
         note: lr.note,
         payment_method: lr.payment_method,
         type: lr.type,
+        isNonDaily: lr.isNonDaily,
         created_at: '',
       })
     }
@@ -850,10 +860,38 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                               ? 'bg-indigo-50 border-l-2 border-l-primary'
                               : rowTx?.category === 'ignore'
                               ? 'bg-slate-300 hover:bg-slate-400 cursor-pointer group'
+                              : expense.isNonDaily
+                              ? 'bg-slate-100/60 hover:bg-slate-100 cursor-pointer group'
                               : 'hover:bg-slate-50 cursor-pointer group'
                           } ${isLastItem && !isLocal ? '' : 'border-b border-slate-50'}`}
                           onClick={() => !isEditing && startEditing(expense)}
                         >
+                          {/* 日常/非日常徽章 */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              if (isLocal || isEditing) {
+                                // 新增本地行或已在编辑态：只改本地表单（新增行由行外点击/回车统一入库；编辑行由行外点击/回车统一保存）
+                                const f = { ...editForm, isNonDaily: !editForm.isNonDaily }
+                                setEditForm(f)
+                                editFormRef.current = f
+                                return
+                              }
+                              // 非编辑态真实行：立即切换保存（不改其它字段）
+                              const next = !expense.isNonDaily
+                              onUpdate(expense.id, expense.category_l2, expense.note, expense.amount, expense.payment_method || '', expense.type || 'expense', next)
+                                .then(() => onRefresh?.())
+                                .catch((err) => console.error('保存失败', err))
+                            }}
+                            className={`w-[52px] h-5 flex-shrink-0 flex items-center justify-center rounded-md text-[10px] transition-colors ${
+                              ((isEditing || isLocal) ? editForm.isNonDaily : expense.isNonDaily)
+                                ? 'bg-slate-200 text-slate-500 hover:bg-slate-300'
+                                : 'bg-transparent text-slate-300 border border-dashed border-slate-200 hover:border-slate-400 hover:text-slate-500'
+                            }`}
+                            title={isEditing || isLocal ? '切换非日常标记' : (expense.isNonDaily ? '非日常（点击改为日常）' : '日常（点击改为非日常）')}
+                          >
+                            {((isEditing || isLocal) ? editForm.isNonDaily : expense.isNonDaily) ? '非日常' : '日常'}
+                          </button>
                           {/* 小类 */}
                           {isEditing ? (
                             <div className="w-[110px] flex-shrink-0">
@@ -876,6 +914,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                                       payment_method: sub?.defaultPaymentMethod || '',
                                       amount: sub?.defaultAmount ? sub.defaultAmount.toString() : '0',
                                       type: sub?.defaultType || 'expense',
+                                      isNonDaily: sub?.defaultIsNonDaily || false,
                                     })
                                   } else {
                                     // 已有记录：只改小类，保留原金额/备注/支付方式，选完即自动保存退出编辑
