@@ -236,6 +236,17 @@ OneLedger/
 | `Square*Logo.png` / `StoreLogo.png` | Windows 应用商店上架才需要，当前未使用，生成时附带更新 |
 | `icon.png` | 512×512 源图备份 |
 
+**网页版 Favicon**（`public/` 下，`index.html` 引用）:
+- 换 Logo 后需同步更新：用 **ffmpeg lanczos** 从 `logo.png` 重采样生成（`sips` 的缩放会让边缘发白发虚，勿用）：
+  ```bash
+  for s in 16 32 48 192; do ffmpeg -hide_banner -loglevel error -i logo.png -vf "scale=${s}:${s}:flags=lanczos" -y public/favicon-${s}x${s}.png; done
+  ffmpeg -hide_banner -loglevel error -i logo.png -vf "scale=180:180:flags=lanczos" -y public/apple-touch-icon.png
+  ```
+- 旧 `favicon.svg`（模板遗留的紫色闪电）已删除，勿再引用。
+- **换 Logo 完整流程**：① 替换根目录 `logo.png`（1024×1024）→ ② 桌面图标：`npx tauri icon logo.png -o backend/icons`（记得删 ios/android 文件夹）→ ③ 网页 favicon：执行上方 ffmpeg 命令 → ④ 重新构建。
+- ⚠️ logo 设计要点（2026-08-10 落实）：**四角必须留透明**（不要白色实底，否则网页小尺寸四角现白边）；**内容铺满画布**（四周少留白，否则网页 favicon 会显得小）。当前 `logo.png` 已是透明四角 + 内容铺满（99.7%×97.2%）版，桌面图标与网页 favicon 均从它生成。
+- ℹ️ **macOS 图标"留白"是系统行为，非 bug**（2026-08-10 定位）：Finder/Dock 显示任何 `.app` 图标时，macOS 会把图标内容统一缩到约 80% 并居中，四周留约 10% 透明边距（所有 App 一致）。因此"内容铺满"的图标在 .app 里看起来也"小一点、四周有留白"，属正常。而 `npm run tauri:dev` 跑的是裸二进制（不在 .app 里），macOS 不做缩边，图标看起来"比正常大"。验证方式：`NSWorkspace.shared.icon(forFile:)` 渲染即 Finder 所见（内容 80.5%）。无需也无法修改，这是 macOS 对所有 App 的统一定制。
+
 ---
 
 ## 代码架构与数据流
