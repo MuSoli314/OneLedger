@@ -338,14 +338,14 @@ function SortableSubCategoryRow({
       {!isEditing && (
         <button
           onClick={(e) => { e.stopPropagation(); onToggleNonDaily() }}
-          className={`flex items-center justify-center w-8 h-5 rounded text-[10px] flex-shrink-0 transition-colors ${
+          className={`flex items-center justify-center px-1.5 h-5 rounded text-[10px] flex-shrink-0 transition-colors ${
             sub.defaultIsNonDaily
               ? 'bg-slate-200 text-slate-500'
               : 'bg-transparent text-slate-300 border border-dashed border-slate-200 hover:border-slate-300 hover:text-slate-400'
           }`}
           title={sub.defaultIsNonDaily ? '默认非日常（点击改为日常）' : '默认日常（点击改为非日常）'}
         >
-          {sub.defaultIsNonDaily ? '非' : '日'}
+          {sub.defaultIsNonDaily ? '非日常' : '日常'}
         </button>
       )}
 
