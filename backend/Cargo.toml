@@ -1,17 +1,17 @@
 [package]
-name = "app"
-version = "2.0.0"
+name = "one-ledger"
+version = "2.1.0"
 description = "一笔（OneLedger）桌面记账应用 —— 个人消费记录与支出管理"
 authors = ["musoli314 <musoli314@gmail.com>"]
 license = "MIT"
-repository = ""
+repository = "https://github.com/MuSoli314/OneLedger"
 edition = "2021"
 rust-version = "1.77.2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "app_lib"
+name = "one_ledger_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

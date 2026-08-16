@@ -42,7 +42,9 @@ export default function HomePage() {
     historyMonth, setHistoryMonth,
     customRange, setCustomRange,
     paymentFilter, setPaymentFilter,
+    dailyFilter, setDailyFilter,
     selectedCats, setSelectedCats,
+    showQuickAdd, setShowQuickAdd,
     clearFilters,
   } = useHomeFilter()
   const [expenses, setExpenses] = useState<Expense[]>([])
@@ -165,18 +167,17 @@ export default function HomePage() {
   // 已有记录的日期集合（用于"添加日期"查重）— 只覆盖当前时间范围
   const existingDates = useMemo(() => new Set(expenses.map((e) => e.date)), [expenses])
 
-  // 整月视图（本月/上月/历史月份）下缺失记录的日期——列表里为这些日期补「+ 添加」快捷行。
-  // 缺的日期会一并落入某段缺失区间：[prev+1, next-1]，其中的两端（挨着已有日期）补快捷。
-  // 展示条件与原有「添加下一天」一致：按了支付方式 / 分类筛选时不补快捷（列表聚焦筛选结果）。
-  const monthRange = (rangeMode === 'month' || rangeMode === 'lastMonth' || rangeMode === 'history') ? range : null
+  // 任何时间范围（近一周 / 近一月 / 本月 / 上月 / 历史月份 / 自定义）下缺失记录的日期——
+  // 列表里为这些日期补「+ 添加」快捷行。缺的日期会一并落入某段缺失区间：[prev+1, next-1]，
+  // 其中的两端（挨着已有日期）补快捷。
   // 有筛选（支付方式 / 分类 / 搜索）时不补缺失日期快捷行（列表聚焦筛选结果）
-  const hasAnyFilter = !!paymentFilter || selectedCats.size > 0 || searchActive
+  const hasAnyFilter = !!paymentFilter || !!dailyFilter || selectedCats.size > 0 || searchActive
   const missingDates = useMemo(() => {
-    if (!monthRange || hasAnyFilter) return []
+    if (hasAnyFilter) return []
     const existing = new Set(expenses.map((e) => e.date))
-    const allDates = eachDay(monthRange.start, monthRange.end)
+    const allDates = eachDay(range.start, range.end)
     return allDates.filter((d) => !existing.has(d))
-  }, [monthRange, hasAnyFilter, expenses])
+  }, [range, hasAnyFilter, expenses])
 
   // 快捷按钮要添加的日期 = 列表里所有日期（真实记录 + 手动添加的空白日期）的最大值 + 1 天。
   // 只在「本月」显示，且最大日期还没到这个月最后一天时才展示（可提前添加未来日期做计划；
@@ -268,7 +269,7 @@ export default function HomePage() {
     }
   }
 
-  const handleUpdate = async (id: number, category_l2: string, note: string, amount: number, payment_method: string, type: TransactionType = 'expense', isNonDaily: boolean = false) => {
+  const handleUpdate = async (id: number, category_l2: string, note: string, amount: number, payment_method: string, type: TransactionType = 'expense', is_non_daily: boolean = false) => {
     await updateExpense(id, {
       amount,
       category_l1: expenses.find((e) => e.id === id)?.category_l1 || '',
@@ -277,7 +278,7 @@ export default function HomePage() {
       note,
       payment_method,
       type,
-      isNonDaily,
+      is_non_daily,
     })
     loadData()
   }
@@ -294,19 +295,19 @@ export default function HomePage() {
     let savedAny = false
     for (const cat of categories) {
       // 未勾选默认的大类不参与「添加某天」自动记账
-      if (!cat.isDefault) continue
-      const defaults = cat.children.filter((c) => c.isDefault)
+      if (!cat.is_default) continue
+      const defaults = cat.children.filter((c) => c.is_default)
       for (const sub of defaults) {
         try {
           await addExpense({
-            amount: sub.defaultAmount || 0,
+            amount: sub.default_amount || 0,
             category_l1: cat.name,
             category_l2: sub.name,
             date,
-            note: sub.defaultNote || '',
-            payment_method: sub.defaultPaymentMethod || '',
-            type: sub.defaultType || 'expense',
-            isNonDaily: sub.defaultIsNonDaily,
+            note: sub.default_note || '',
+            payment_method: sub.default_payment_method || '',
+            type: sub.default_type || 'expense',
+            is_non_daily: sub.default_is_non_daily,
           })
           savedAny = true
         } catch (err) {
@@ -335,10 +336,10 @@ export default function HomePage() {
   const recordCount = expenses.length
   // 日常 / 非日常支出金额（只统计「计入支出」的记录，与卡片「支出」口径一致：日常 + 非日常 = 支出）
   const dailyTotal = expenses
-    .filter((e) => expenseCodes.has(e.type) && !e.isNonDaily)
+    .filter((e) => expenseCodes.has(e.type) && !e.is_non_daily)
     .reduce((sum, e) => sum + e.amount, 0)
   const nonDailyTotal = expenses
-    .filter((e) => expenseCodes.has(e.type) && e.isNonDaily)
+    .filter((e) => expenseCodes.has(e.type) && e.is_non_daily)
     .reduce((sum, e) => sum + e.amount, 0)
 
   // 是否正在按分类筛选
@@ -378,6 +379,8 @@ export default function HomePage() {
   const filteredExpenses = useMemo(() => {
     let list = expenses
     if (paymentFilter) list = list.filter((e) => (e.payment_method || '未设置') === paymentFilter)
+    if (dailyFilter === 'daily') list = list.filter((e) => !e.is_non_daily)
+    if (dailyFilter === 'nonDaily') list = list.filter((e) => e.is_non_daily)
     if (selectedCats.size > 0) list = list.filter((e) => selectedCats.has(catKey(e.category_l1, e.category_l2)))
     // 搜索：金额（原始数字或两位小数格式）与备注做不区分大小写的子串匹配
     const q = searchQuery.trim().toLowerCase()
@@ -389,7 +392,7 @@ export default function HomePage() {
       })
     }
     return list
-  }, [expenses, paymentFilter, selectedCats, searchQuery])
+  }, [expenses, paymentFilter, dailyFilter, selectedCats, searchQuery])
 
   // 支付方式统计（只统计支出，与卡片总支出 ¥expenseTotal 口径一致；金额按从高到低排序）
   const paymentTotals = useMemo(() => {
@@ -506,6 +509,7 @@ export default function HomePage() {
             {/* 时间范围选择器 + 导出（一行，选中的按钮即标题） */}
             <div className="relative">
               <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+                <span className="inline-flex items-center gap-1 text-sm font-semibold text-primary bg-white rounded-full px-2.5 py-1 shadow-sm">💰 概览</span>
                 {RANGE_PILLS.map((p) => (
                   <button
                     key={p.key}
@@ -599,17 +603,39 @@ export default function HomePage() {
                   <span className="text-xs opacity-70">{recordCount}笔</span>
                 </div>
 
-                {/* 日常（只统计计入支出的日常记录金额） */}
-                <div className="flex items-center gap-1 whitespace-nowrap">
-                  <span className="opacity-80">日常</span>
+                {/* 日常（只统计计入支出的日常记录金额；点击 = 筛选列表只看日常，类似支付方式筛选，再点取消） */}
+                <button
+                  type="button"
+                  onClick={() => setDailyFilter(dailyFilter === 'daily' ? '' : 'daily')}
+                  className={`flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 transition-colors ${
+                    dailyFilter === 'daily'
+                      ? 'bg-white text-primary font-semibold'
+                      : dailyFilter
+                      ? 'bg-white/10 hover:bg-white/25 opacity-50'
+                      : 'bg-white/10 hover:bg-white/20'
+                  }`}
+                  title={dailyFilter === 'daily' ? '取消筛选（当前只看日常）' : '筛选：只显示日常支出'}
+                >
+                  <span className={dailyFilter === 'daily' ? '' : 'opacity-80'}>日常</span>
                   <span className="font-semibold tabular-nums">¥{dailyTotal.toFixed(2)}</span>
-                </div>
+                </button>
 
-                {/* 非日常（只统计计入支出的非日常记录金额） */}
-                <div className="flex items-center gap-1 whitespace-nowrap">
-                  <span className="opacity-80">非日常</span>
+                {/* 非日常（同上，点击筛选列表只看非日常） */}
+                <button
+                  type="button"
+                  onClick={() => setDailyFilter(dailyFilter === 'nonDaily' ? '' : 'nonDaily')}
+                  className={`flex items-center gap-1 whitespace-nowrap rounded-md px-1.5 py-0.5 transition-colors ${
+                    dailyFilter === 'nonDaily'
+                      ? 'bg-white text-primary font-semibold'
+                      : dailyFilter
+                      ? 'bg-white/10 hover:bg-white/25 opacity-50'
+                      : 'bg-white/10 hover:bg-white/20'
+                  }`}
+                  title={dailyFilter === 'nonDaily' ? '取消筛选（当前只看非日常）' : '筛选：只显示非日常支出'}
+                >
+                  <span className={dailyFilter === 'nonDaily' ? '' : 'opacity-80'}>非日常</span>
                   <span className="font-semibold tabular-nums">¥{nonDailyTotal.toFixed(2)}</span>
-                </div>
+                </button>
 
                 {/* 预算（近一周/近一月无预算月份，显示 -；其余模式原生上下箭头 ±1000，点箭头即保存） */}
                 <div className="flex items-center gap-1 whitespace-nowrap">
@@ -726,8 +752,10 @@ export default function HomePage() {
             <div className="text-center py-16 text-slate-400 text-sm">加载中...</div>
           ) : (
             <div className="space-y-4">
-              {/* 搜索框：按金额 / 备注筛选列表记录 */}
-              <div className="relative">
+              {/* 记账列表标题 + 搜索框 + 快捷添加开关（开关关闭时隐藏缺失日期的「+ 添加」快捷行） */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="inline-flex items-center gap-1 text-sm font-medium text-emerald-700 bg-emerald-100/90 rounded-full px-2.5 py-1">📝 记账列表</span>
+                <div className="relative flex-1 min-w-0">
                 <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
                 </svg>
@@ -750,6 +778,30 @@ export default function HomePage() {
                   </button>
                 )}
               </div>
+                {/* 快捷添加开关：控制缺失日期「+ 添加」快捷行的显隐（悬浮气泡说明显示条件与功能；
+                    原生 title 在 Tauri WebView 不显示，沿用黄历卡的自定义气泡方案） */}
+                <div className="relative group shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowQuickAdd((v) => !v)}
+                    className={`flex items-center gap-1.5 text-xs font-medium rounded-full px-2.5 py-1.5 border transition-colors ${
+                      showQuickAdd
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                        : 'bg-slate-50 border-slate-200 text-slate-400'
+                    }`}
+                  >
+                    <span className={`relative inline-flex w-7 h-4 rounded-full transition-colors ${showQuickAdd ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+                      <span className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${showQuickAdd ? 'translate-x-3' : ''}`} />
+                    </span>
+                    快捷添加
+                  </button>
+                  {/* 悬浮说明气泡：点击开关切换显示/隐藏，下方两行说明功能与显示条件（w-max + nowrap 保证每行完整单行展示） */}
+                  <div className="pointer-events-none absolute right-0 top-full mt-2 z-30 hidden group-hover:block w-max whitespace-nowrap bg-slate-800/95 text-white text-xs leading-relaxed rounded-lg px-3 py-2.5 shadow-lg">
+                    <div>为当前时间范围内没有记录的日期补「+添加」快捷行。</div>
+                    <div className="mt-1.5">开启支付方式/日常/分类筛选或搜索时无效。</div>
+                  </div>
+                </div>
+              </div>
               <ExpenseList
                 expenses={filteredExpenses}
                 onDelete={handleDelete}
@@ -758,11 +810,11 @@ export default function HomePage() {
                 onRefresh={loadData}
                 extraDates={searchActive ? [] : addedDates}
                 autoExpandDates={autoExpandDates}
-                missingDates={missingDates}
+                missingDates={showQuickAdd ? missingDates : []}
                 onAddDate={saveNewDate}
                 onDeleteDate={handleDeleteDate}
                 onDeleteCategory={handleDeleteCategory}
-                hasFilter={!!paymentFilter || hasCategoryFilter || searchActive}
+                hasFilter={!!paymentFilter || !!dailyFilter || hasCategoryFilter || searchActive}
                 searchActive={searchActive}
               />
             </div>

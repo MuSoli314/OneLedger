@@ -39,7 +39,7 @@ export interface Expense {
   payment_method: string
   type: TransactionType
   created_at: string
-  isNonDaily: boolean
+  is_non_daily: boolean
 }
 
 export interface ExpenseInput {
@@ -50,7 +50,7 @@ export interface ExpenseInput {
   note: string
   payment_method: string
   type: TransactionType
-  isNonDaily?: boolean
+  is_non_daily?: boolean
 }
 
 export interface MonthlyStats {
@@ -115,12 +115,12 @@ export interface SubCategoryRecord {
 export interface SubCategoryChild {
   id: number
   name: string
-  isDefault: boolean
-  defaultNote: string
-  defaultPaymentMethod: string
-  defaultAmount: number
-  defaultType: TransactionType
-  defaultIsNonDaily: boolean
+  is_default: boolean
+  default_note: string
+  default_payment_method: string
+  default_amount: number
+  default_type: TransactionType
+  default_is_non_daily: boolean
 }
 
 // 前端使用的分类树（含子分类的完整结构）
@@ -129,6 +129,6 @@ export interface CategoryWithChildren {
   name: string
   icon: string
   /** 大类是否参与「添加某天」自动记账（勾选后，其下默认小类才会被自动添加） */
-  isDefault: boolean
+  is_default: boolean
   children: SubCategoryChild[]
 }

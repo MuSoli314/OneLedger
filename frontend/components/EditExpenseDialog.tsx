@@ -29,7 +29,7 @@ export default function EditExpenseDialog({ expense, onSave, onClose }: Props) {
     payment_method: expense.payment_method || '',
     type: expense.type || 'expense',
     note: expense.note,
-    isNonDaily: expense.isNonDaily,
+    is_non_daily: expense.is_non_daily,
   })
   const [saving, setSaving] = useState(false)
 
@@ -82,7 +82,7 @@ export default function EditExpenseDialog({ expense, onSave, onClose }: Props) {
         note: form.note,
         payment_method: form.payment_method || '',
         type: form.type || 'expense',
-        isNonDaily: form.isNonDaily,
+        is_non_daily: form.is_non_daily,
       })
       onClose()
     } catch (err) {
@@ -202,15 +202,15 @@ export default function EditExpenseDialog({ expense, onSave, onClose }: Props) {
                   <label className="block text-xs font-medium text-slate-500 mb-1">标记</label>
                   <button
                     type="button"
-                    onClick={() => set({ isNonDaily: !form.isNonDaily })}
+                    onClick={() => set({ is_non_daily: !form.is_non_daily })}
                     className={`w-full h-8 flex items-center justify-center rounded-lg text-xs font-medium transition-colors ${
-                      form.isNonDaily
+                      form.is_non_daily
                         ? 'bg-slate-200 text-slate-600 hover:bg-slate-300'
                         : 'bg-transparent text-slate-400 border border-dashed border-slate-300 hover:border-slate-500 hover:text-slate-600'
                     }`}
                     title="切换日常/非日常"
                   >
-                    {form.isNonDaily ? '非日常' : '日常'}
+                    {form.is_non_daily ? '非日常' : '日常'}
                   </button>
                 </div>
               </div>

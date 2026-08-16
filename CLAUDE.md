@@ -137,6 +137,7 @@ OneLedger/
 │   │   ├── calcUtils.ts          # 金额表达式解析（+ - * / 与括号，递归下降，无 eval）
 │   │   ├── database.ts           # SQLite 数据库操作（schema 唯一维护处，桌面/网页自适应）
 │   │   ├── webDb.ts              # 网页版数据层（sql.js + IndexedDB 持久化）
+│   │   ├── lunarUtils.ts         # 农历 / 节气 / 节日 / 黄历工具（lunar-javascript）
 │   │   └── emojis.ts             # emoji 候选列表
 │   ├── contexts/
 │   │   ├── CategoryContext.tsx   # 分类数据共享 Context
@@ -144,10 +145,19 @@ OneLedger/
 │   │   └── HomeFilterContext.tsx # 首页筛选状态（切页保留）
 │   ├── components/
 │   │   ├── Layout.tsx            # 应用布局 + 顶部导航
-│   │   ├── ExpenseList.tsx       # 消费记录列表（按日分组 + 行内编辑 + 完整编辑弹窗入口 + 快捷添加）
+│   │   ├── ExpenseList.tsx       # 记账列表主组件（日期分组 + 缺失日期快捷行 + 行内编辑状态 + 完整编辑弹窗入口）
+│   │   ├── ExpenseRow.tsx        # 单条记录行（含行内编辑：小类/金额/支付方式/类型/备注/日常/删除）
+│   │   ├── ExpenseCategoryGroup.tsx # 按日分组内的「一级大类」分组（标题 + 记录行 + 添加小类）
+│   │   ├── CategoryAddPopover.tsx   # 「添加」按钮弹出的大类+小类联动选择面板（支持自定义）
+│   │   ├── PaymentMethodTotals.tsx  # 每日支付方式统计徽章（桌面/移动两态复用）
+│   │   ├── expenseListTypes.ts      # 记账列表专用类型（LocalRow/EditField/EditForm）
+│   │   ├── CategoryDragHandle.tsx   # 拖拽排序手柄（六点 grip）
+│   │   ├── SortableCategoryRow.tsx  # 分类管理可拖拽大类行（标题/改名/图标选择/小类插槽）
+│   │   ├── SortableSubCategoryRow.tsx # 分类管理可拖拽小类行（默认模板行内编辑，导出 EditField/SubEditForm）
 │   │   ├── EditExpenseDialog.tsx # 记录完整编辑弹窗（全部信息含日期可改）
-│   │   ├── MonthOverview.tsx     # 记账页顶部（支出日历 1/3，日期为正方形格子、可自选月份默认本月 + 右侧按天双线图 2/3，折线图跟随范围选择器联动）
+│   │   ├── MonthOverview.tsx     # 记账页顶部（支出日历 1/3，日期为正方形格子、可自选月份默认本月 + 右侧上下两张独立卡片：按天双线图卡（高 200px）+ 农历黄历卡（干支年月日/宜/忌，悬停联动）；折线图跟随范围选择器）
 │   │   ├── MonthCalendar.tsx     # 支出日历（每天格子显示支出金额，金额越高格子背景靛蓝色越深 = 按月自动分档热力图，点击某天 = 自定义选中该天，月份由外部控制）
+│   │   ├── LunarCard.tsx         # 农历黄历卡（干支年月日/宜/忌，悬停联动，独立卡片）
 │   │   ├── StatsPanel.tsx        # 右栏统计面板（分类排行）
 │   │   ├── TrendChart.tsx        # 折线图（月度趋势 / 按天双线，Y 轴分段压缩）
 │   │   ├── DatePicker.tsx        # 日期选择
@@ -158,7 +168,7 @@ OneLedger/
 │   └── pages/
 │       ├── HomePage.tsx          # 记账页：日历区 + 两栏（左 3/5 概览卡/记录列表 + 右 2/5 分类排行）
 │       ├── StatsPage.tsx         # 统计页（导航首位：近 12 月趋势 + 本月概览/环比 + 分类 TOP5）
-│       ├── CategoryManager.tsx   # 分类管理页（增删改 + 默认模板 + 拖拽排序）
+│       ├── CategoryPage.tsx      # 分类管理页（增删改 + 默认模板 + 拖拽排序）
 │       └── SettingsPage.tsx      # 设置页（支付方式 / 收支类型管理）
 ├── backend/                       # Rust 原生后端（Tauri）
 │   ├── src/
@@ -167,6 +177,7 @@ OneLedger/
 ├── public/                        # 网页版 favicon 等静态资源
 ├── index.html                    # 入口 HTML
 ├── logo.png                      # 应用图标源图（1024×1024，更换 Logo 见下方说明）
+├── ARCHITECTURE.md               # 架构说明（开发者必读：命名规范 / 数据流 / 表结构）
 ├── README.md                     # 产品文档
 ├── package.json                  # 项目依赖
 └── .github/workflows/release.yml # 发版自动构建安装包（打标签触发）
@@ -281,6 +292,115 @@ OneLedger/
 > 备注、日常/非日常全部可改，Esc/遮罩/取消关闭，保存校验与行内编辑一致（金额支持算式、不可
 > 为负）。保存走 `updateExpense`（数据库本就支持改 date），改日期后自动展开目标日期分组让记录
 > 直接可见。行内编辑保留不动（快速小改仍点格子），两个编辑入口并存（用户拍板）。
+>
+> 2026-08-18（补充，用户反馈后调整）：记账页顶部右侧按天折线图**高度调为原来的 2/3**（卡片
+> 高度仍与日历对齐，图表下方 1/3 留白；移动端单列时图表保持 300px 不变）。仅改
+> `MonthOverview.tsx`（图表与占位 div 按 flex 权重 1:0.5 分配剩余高度），无数据库改动。
+>
+> 2026-08-18（补充二，用户反馈后调整）：折线图下方原 1/3 留白改为**农历黄历面板**——干支年月日
+> （如「丙午马年 丙申月 戊午日」）+ 宜 / 忌列表（老黄历事项）。**鼠标悬停日历某天即时显示该天
+> 黄历**，点击选中某天也显示，默认显示今天；宜红字 / 忌灰字，副标题带公历日期与农历月日。
+> 改动：`lunarUtils.ts` 新增 `getDayLunarInfo`（缓存）、`lunar-javascript.d.ts` 补声明、
+> `MonthCalendar.tsx` 新增 `onHoverDay` 悬停回调、`MonthOverview.tsx` 下方 1/3 改为黄历面板，
+> 无数据库改动。
+>
+> 2026-08-18（补充三，用户反馈后调整）：黄历不再和折线图共用一张卡 —— 记账页右侧改为**上下两张
+> 独立卡片**：上面折线图卡（图表高 200px ≈ 原来高度的 2/3），下面独立**农历黄历卡**（淡黄底色
+> + 边框，与折线图明显区分；内容垂直居中，flex-1 撑满剩余高度与日历对齐）。仅改
+> `MonthOverview.tsx`，无数据库改动。
+>
+> 2026-08-18（补充四，用户反馈后调整）：农历黄历卡**字号整体调大** —— 干支年月日由 14px 提到
+> 16px 加粗、宜/忌事项由 11px 提到 14px、公历/农历副标题 11px → 12px，行距同步放宽。仅改
+> `MonthOverview.tsx`。
+>
+> 2026-08-18（补充五，用户反馈后调整）：农历黄历卡 **UI 美化** —— 顶部新增「📜 黄历」胶囊标签
+> （左）+ 公历/农历日期（右）；干支年月日改为**居中主标题**（字距加宽）；宜/忌改为**红/灰徽标行**
+> （红底红字「宜」/ 灰底灰字「忌」圆角小方块 + 事项），事项改用「、」分隔，宜/忌区与干支区之间
+> 加淡黄分隔线；卡片底色改为淡黄到浅黄渐变。仅改 `MonthOverview.tsx`，无数据库改动。
+>
+> 2026-08-18（补充六，用户反馈后调整）：黄历卡**整体压矮** —— 去掉顶部「📜 黄历」标签行与
+> 分隔线，干支年月日改为**第一行居中**（公历/农历日期小字居中放其下方一行），宜/忌徽标缩小
+> （w-6 h-6）行距收紧。仅改 `MonthOverview.tsx`，无数据库改动。
+>
+> 2026-08-18（补充七，用户反馈后调整）：黄历卡**第一行三区布局** —— 第一行改为「📜 黄历」标签
+> （左）+ 干支年月日（中，居中）+ 公历/农历日期（右，如 8月16日 · 今天 · 农历七月初四）单行排列，
+> 不再单独占行，下方宜/忌徽标行不变，卡片保持紧凑。仅改 `MonthOverview.tsx`，无数据库改动。
+>
+> 2026-08-18（补充八）：黄历卡抽成独立组件 `LunarCard.tsx` —— 悬停状态（hoverDay）内置在卡片
+> 内部，日历悬停事件经父组件持有的 `hoverBridge` ref 跨列直达卡片内部 setter，悬停日历只重渲染
+> 这张卡，右侧折线图不再被悬停触发重渲染/重放动画。`MonthOverview.tsx` 相应瘦身。
+>
+> 2026-08-18（补充九，用户反馈后调整）：宜/忌事项**固定一行展示** —— 超出部分省略号截断（不再
+> 换行导致卡片高度自适应变化），鼠标悬浮该行显示完整事项列表（原生 title 提示气泡）。仅改
+> `LunarCard.tsx`，无数据库改动。
+>
+> 2026-08-18（补充十，用户反馈后调整）：原生 title 提示在 Tauri WebView（WKWebView）里不显示，
+> 改为**自定义悬浮气泡** —— `LunarCard.tsx` 新增内部 `YiJiRow` 行组件：用 ResizeObserver 检测
+> 该行文字是否真的被截断，仅截断时渲染深色提示气泡（group-hover 显示完整事项列表，pointer-events
+> 不挡鼠标）；文字放得下时不弹气泡。仅改 `LunarCard.tsx`，无数据库改动。
+>
+> 2026-08-18（补充十一，用户拍板：每模块不同浅色）：记账页每个子模块卡左上角加**「图标 + 名称」
+> 胶囊标题**（与黄历卡「📜 黄历」同款样式，各模块不同浅色以便区分）—— 📅 支出日历（淡靛蓝，
+> 月份导航前）/ 📈 按天趋势（淡蓝，范围标题前）/ 💰 概览（蓝色渐变卡上白底胶囊）/ 📝 消费记录
+> （淡绿，与搜索框同一行）/ 🏆 分类排行（淡紫，替换原纯文字标题）。黄历卡保持原样。改动：
+> `MonthOverview.tsx`、`HomePage.tsx`、`StatsPanel.tsx`，无数据库改动。
+>
+> 2026-08-18（补充十二，用户反馈后调整）：去掉支出日历卡右上角提示「点击某天 = 查看当天」
+> （日历顶部只留月份导航 + 📅 支出日历标题）。仅改 `MonthOverview.tsx`，无数据库改动。
+>
+> 2026-08-18（补充十三，用户反馈后调整）：记账页列表模块胶囊标题由「📝 消费记录」改为
+> 「📝 记账列表」。仅改 `HomePage.tsx`，无数据库改动。
+>
+> 2026-08-18（补充十四，用户反馈后调整）：顶部趋势图模块胶囊标题由「📈 按天趋势」改为
+> 「📈 支出趋势」。仅改 `MonthOverview.tsx`，无数据库改动。
+>
+> 2026-08-18（补充十五，用户反馈后调整）：全部 6 个模块胶囊标题字号由 text-xs（12px）统一提到
+> text-sm（14px），保证标题不小于正文。改动：`MonthOverview.tsx`、`HomePage.tsx`、`StatsPanel.tsx`、
+> `LunarCard.tsx`，无数据库改动。
+>
+> 2026-08-18（补充十六，用户反馈后调整）：概览卡里的**日常 / 非日常 可点击筛选**（与下方支付方式
+> 筛选行为一致）—— 点击「日常」列表只显示日常记录、点击「非日常」只显示非日常记录，再点取消；
+> 选中态白底主题色字、未选中半透明、另一个筛选生效时对方置灰；可与支付方式/分类筛选叠加；纳入
+> 「清除筛选」。筛选状态提升到 `HomeFilterContext`（`dailyFilter`），切页保留。改动：
+> `HomeFilterContext.tsx`、`HomePage.tsx`，无数据库改动。
+>
+> 2026-08-18（补充十七，用户反馈后调整）：记账列表标题行右侧新增**「快捷添加」开关**（滑动开关
+> 样式，默认开）—— 关闭后隐藏列表里缺失日期的「+ 添加」快捷行（含「+ 更多（N 天）」折叠行），
+> 列表更干净易读；开启恢复。状态在 `HomeFilterContext`（`showQuickAdd`），切页保留。改动：
+> `HomeFilterContext.tsx`、`HomePage.tsx`，无数据库改动。
+>
+> 2026-08-18 前后端命名与工程规范化（用户拍板，纯重构无功能变化）：① Rust crate 改名
+> `app` → `one-ledger`（库 `one_ledger_lib`，`Cargo.toml` + `main.rs`，桌面安装包名不受影响）；
+> ② `Expense`/`ExpenseInput` 字段 `isNonDaily` → `is_non_daily`（与数据库列名完全一致，
+> 消除同接口内 camel/snake 混用；`defaultIsNonDaily` 属 UI 包装类型不变）；
+> ③ 分类管理页 `CategoryManager.tsx` → `CategoryPage.tsx`（页面统一 `*Page` 命名）；
+> ④ 新增 `ARCHITECTURE.md`（架构/数据流/命名规范/表结构对照，开发者必读）；
+> ⑤ README.md 对齐真实代码（目录结构/功能/版本历史/从零运行指南）；
+> ⑥ `backend/gen/` 加入 `.gitignore`；⑦ `package.json` 加 `engines` + `typecheck` 脚本、
+> `Cargo.toml` 补 `repository`；⑧ `.oxlintrc.json` 加 `allowExportNames`（Context hook 白名单），
+> lint 恢复 0 警告。
+>
+> 2026-08-18 C1 配置类类型全量 snake_case（用户拍板，纯重构无功能变化）：把上一轮遗留的
+> 4 个 UI 包装类型的 camelCase 字段全部改为 snake_case，命名规则从此**无例外** ——
+> `SubCategoryChild`（`isDefault`→`is_default`、`defaultNote`→`default_note`、
+> `defaultPaymentMethod`→`default_payment_method`、`defaultAmount`→`default_amount`、
+> `defaultType`→`default_type`、`defaultIsNonDaily`→`default_is_non_daily`）、
+> `CategoryWithChildren.isDefault`→`is_default`（`PaymentMethodConfig`/`TxTypeConfig` 字段
+> 本就是单词无需改）；连带更新：`categories.ts` 种子标记、`database.ts` 映射与
+> `updateSubCategoryDefaults`/toggle 参数、`CategoryContext.tsx` 接口与回调、
+> `HomePage.tsx`「添加某天」、`ExpenseList.tsx` 默认小类取值、`CategoryPage.tsx` 编辑表单
+> （含 `subEditForm` 表单字段与 `EditField`）；ARCHITECTURE.md §5 命名规范表同步更新
+> （去掉 camelCase 例外，规则：数据字段一律 snake_case，函数/局部变量/React 状态名仍 camelCase）。
+>
+> 2026-08-18 C2 拆分大文件（用户拍板，纯搬运无功能变化）：`ExpenseList.tsx` 1318 行拆为
+> 主组件 819 行 + `ExpenseRow.tsx`（单条记录行，含行内编辑与聚焦逻辑）、
+> `ExpenseCategoryGroup.tsx`（按日分组内的大类分组）、`CategoryAddPopover.tsx`
+> （「添加」按钮的大类+小类联动面板）、`PaymentMethodTotals.tsx`（支付方式统计徽章，
+> 顺带消除桌面/移动两段重复代码）、`expenseListTypes.ts`（LocalRow/EditField/EditForm 类型，
+> `formatDate`/`getWeekday` 并入 `data/dateUtils.ts`）；`CategoryPage.tsx` 1039 行拆为
+> 主组件 539 行 + `SortableCategoryRow.tsx`（可拖拽大类行）、`SortableSubCategoryRow.tsx`
+> （可拖拽小类行，导出 EditField/SubEditForm）、`CategoryDragHandle.tsx`（拖拽手柄）；
+> 全部为新文件纯剪切搬运，props 显式透传，无行为变化；ARCHITECTURE.md 组件清单同步更新。
 
 ---
 
@@ -338,7 +458,7 @@ OneLedger/
 |------|------|------|
 | `/` | `HomePage` | 记账页：顶部日历区（日历 1/3，日期为正方形格子 + 按天图 2/3，折线图跟随范围）+ 两栏（左 3/5 概览卡/记录列表 + 右 2/5 分类排行 + 预算 + CSV 导出） |
 | `/stats` | `StatsPage` | 统计页（导航首位「统计/记账/分类/设置」）：近 12 月趋势 + 本月概览/环比 + 分类 TOP5 |
-| `/categories` | `CategoryManager` | 分类管理（增删改 + 默认模板 + 默认大类开关 + 拖拽排序） |
+| `/categories` | `CategoryPage` | 分类管理（增删改 + 默认模板 + 默认大类开关 + 拖拽排序） |
 | `/settings` | `SettingsPage` | 设置（支付方式 / 收支类型管理） |
 
 所有页面共享 `Layout` 组件（顶部导航栏），通过 `BrowserRouter` 包裹。

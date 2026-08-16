@@ -2,7 +2,7 @@
 export interface Category {
   name: string
   icon: string
-  children: { name: string; isDefault?: boolean }[] // isDefault: 新装播种时标记为默认小类（记账自动带出）
+  children: { name: string; is_default?: boolean }[] // is_default: 新装播种时标记为默认小类（记账自动带出）
 }
 
 export const categories: Category[] = [
@@ -11,9 +11,9 @@ export const categories: Category[] = [
     icon: '🍜',
     children: [
       // 早餐/午餐/晚餐为默认小类（新装开箱即用；老库由 database.ts 一次性迁移回填）
-      { name: '🥚早餐', isDefault: true },
-      { name: '🍚午餐', isDefault: true },
-      { name: '🍜晚餐', isDefault: true },
+      { name: '🥚早餐', is_default: true },
+      { name: '🍚午餐', is_default: true },
+      { name: '🍜晚餐', is_default: true },
       { name: '🧋奶茶' },
       { name: '🍟零食' },
       { name: '🥤饮料' },

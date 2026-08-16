@@ -41,7 +41,7 @@ export default function StatsPanel({ startDate, endDate, dataVersion, selectedCa
   return (
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-semibold text-slate-700">📊 分类排行</h3>
+        <span className="inline-flex items-center gap-1 text-sm font-medium text-violet-700 bg-violet-100/90 rounded-full px-2.5 py-1">🏆 分类排行</span>
         {(selectedCats.size > 0 || paymentFilter) && (
           <button
             type="button"

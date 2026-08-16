@@ -56,3 +56,40 @@ export function getDayExtra(date: string): DayExtra {
   cache.set(date, result)
   return result
 }
+
+/** 某天（YYYY-MM-DD）的农历黄历信息：干支年月日 + 农历月日 + 宜 / 忌（记账页日历右侧面板用） */
+export interface DayLunarInfo {
+  /** 干支年 + 生肖，如「丙午马」 */
+  year: string
+  /** 干支月，如「丙申」 */
+  month: string
+  /** 干支日，如「壬戌」 */
+  day: string
+  /** 农历月日，如「七月初四」（含闰月标记） */
+  lunarDate: string
+  /** 宜（老黄历事项列表，可能为空） */
+  yi: string[]
+  /** 忌（老黄历事项列表，可能为空） */
+  ji: string[]
+}
+
+const infoCache = new Map<string, DayLunarInfo>()
+
+export function getDayLunarInfo(date: string): DayLunarInfo {
+  const cached = infoCache.get(date)
+  if (cached) return cached
+
+  const [y, m, d] = date.split('-').map(Number)
+  const lunar = Solar.fromYmd(y, m, d).getLunar()
+  const result: DayLunarInfo = {
+    year: `${lunar.getYearInGanZhi()}${lunar.getYearShengXiao()}`,
+    month: lunar.getMonthInGanZhi(),
+    day: lunar.getDayInGanZhi(),
+    lunarDate: `${lunar.getMonthInChinese()}月${lunar.getDayInChinese()}`,
+    yi: lunar.getDayYi(),
+    ji: lunar.getDayJi(),
+  }
+
+  infoCache.set(date, result)
+  return result
+}

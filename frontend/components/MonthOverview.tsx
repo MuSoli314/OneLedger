@@ -1,12 +1,13 @@
 // 记账页顶部：左侧支出日历（可自选月份，默认本月；每天格子显示支出金额，点击某天 = 在时间范围里
 // 「自定义」选中该天）；右侧按天支出趋势图（原「当月支出」图，只是换了个位置：标题=当前时间范围
 // 标签、跟随范围选择器与记账列表联动）。
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { getDailyTotals, getDailyTotalsByNonDaily, getMonths } from '../data/database'
 import { eachDay, localMonthString, formatMonth, getRangeDates } from '../data/dateUtils'
 import { useCategories } from '../contexts/CategoryContext'
 import { DailyDualLineChart } from './TrendChart'
 import MonthCalendar from './MonthCalendar'
+import LunarCard, { type LunarHoverBridge } from './LunarCard'
 import type { DailyNonDailyPoint, DailyTrendPoint } from '../data/types'
 
 interface Props {
@@ -30,6 +31,13 @@ export default function MonthOverview({ dataVersion, startDate, endDate, title, 
   // 日历显示的月份（默认本月；左右箭头微调 + 下拉直接跳，且与时间范围选择器联动）
   const [viewMonth, setViewMonth] = useState(localMonthString())
   const [months, setMonths] = useState<string[]>([]) // 有记录的月份（供日历月份下拉）
+
+  // 黄历悬停桥：日历在左列、黄历卡在右列，悬停事件经此 ref 直达黄历卡内部 setter。
+  // 悬停不在这里存 state，MonthOverview（含折线图）就不会因悬停而重渲染。
+  const hoverBridgeRef = useRef<LunarHoverBridge | null>(null)
+  const handleCalendarHover = useCallback((day: string | null) => {
+    hoverBridgeRef.current?.setHoverDay(day)
+  }, [])
 
   const thisMonth = localMonthString()
 
@@ -96,7 +104,8 @@ export default function MonthOverview({ dataVersion, startDate, endDate, title, 
       {/* 左侧（1/3）：支出日历（可自选月份，默认本月；日期为正方形格子） */}
       <div className="lg:col-span-1 bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
         <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 text-sm font-medium text-indigo-700 bg-indigo-100/90 rounded-full px-2.5 py-1">📅 支出日历</span>
             <button
               type="button"
               onClick={() => shiftMonth(-1)}
@@ -108,7 +117,7 @@ export default function MonthOverview({ dataVersion, startDate, endDate, title, 
             <select
               value={viewMonth}
               onChange={(e) => changeMonth(e.target.value)}
-              className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-sm font-semibold text-slate-700 focus:outline-none focus:border-primary"
+              className="h-7 bg-white border border-slate-200 rounded-lg px-2 text-sm font-semibold text-slate-700 focus:outline-none focus:border-primary"
               title="选择月份"
             >
               {monthOptions.map((m) => (
@@ -133,46 +142,53 @@ export default function MonthOverview({ dataVersion, startDate, endDate, title, 
               </button>
             )}
           </div>
-          <span className="text-[11px] text-slate-400">点击某天 = 查看当天</span>
         </div>
         <MonthCalendar
           month={viewMonth}
           amountByDay={amountByDay}
           selectedDay={selectedDay}
           onSelectDay={onSelectDay}
+          onHoverDay={handleCalendarHover}
         />
       </div>
 
-      {/* 右侧（2/3）：按天支出趋势图（标题 = 当前时间范围；高度撑满与日历对齐） */}
-      <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-100 shadow-sm p-5 flex flex-col">
-        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-          <div className="flex items-center gap-3 flex-wrap">
-            <h3 className="text-sm font-semibold text-slate-700">{title}</h3>
-            {/* 图例：全天虚线 + 日常实线 */}
-            <div className="flex items-center gap-3 text-[11px] text-slate-500">
-              <span className="inline-flex items-center gap-1">
-                <span className="inline-block w-4 h-0.5 bg-[#cbd5e1]" style={{ backgroundImage: 'repeating-linear-gradient(90deg, #cbd5e1 0 3px, transparent 3px 6px)' }} />
-                全天
-              </span>
-              <span className="inline-flex items-center gap-1">
-                <span className="inline-block w-4 h-0.5 bg-[#6366f1] rounded" />
-                日常
-              </span>
+      {/* 右侧（2/3）：两张独立卡片上下排列 —— 上面是单独的农历黄历卡片，下面是按天支出趋势图
+          （标题 = 当前时间范围，图表高 200px = 原来高度的约 2/3） */}
+      <div className="lg:col-span-2 flex flex-col gap-6">
+        {/* 农历黄历卡片（上，独立卡片）：悬停 / 选中日历某天即显示该天信息，默认今天。
+            悬停状态在 LunarCard 内部自持，悬停只重渲染这张卡，折线图不受影响 */}
+        <LunarCard selectedDay={selectedDay} hoverBridge={hoverBridgeRef} />
+
+        {/* 折线图卡片（下） */}
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
+          <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="inline-flex items-center gap-1 text-sm font-medium text-sky-700 bg-sky-100/90 rounded-full px-2.5 py-1">📈 支出趋势</span>
+              <h3 className="text-sm font-semibold text-slate-700">{title}</h3>
+              {/* 图例：全天虚线 + 日常实线 */}
+              <div className="flex items-center gap-3 text-[11px] text-slate-500">
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block w-4 h-0.5 bg-[#cbd5e1]" style={{ backgroundImage: 'repeating-linear-gradient(90deg, #cbd5e1 0 3px, transparent 3px 6px)' }} />
+                  全天
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block w-4 h-0.5 bg-[#6366f1] rounded" />
+                  日常
+                </span>
+              </div>
             </div>
+            <select
+              value={activeCategory}
+              onChange={(e) => setActiveCategory(e.target.value)}
+              className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-600 focus:outline-none focus:border-primary"
+            >
+              <option value="">📊 全天</option>
+              {categories.map((c) => (
+                <option key={c.name} value={c.name}>{c.icon} {c.name}</option>
+              ))}
+            </select>
           </div>
-          <select
-            value={activeCategory}
-            onChange={(e) => setActiveCategory(e.target.value)}
-            className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-600 focus:outline-none focus:border-primary"
-          >
-            <option value="">📊 全天</option>
-            {categories.map((c) => (
-              <option key={c.name} value={c.name}>{c.icon} {c.name}</option>
-            ))}
-          </select>
-        </div>
-        <div className="flex-1 min-h-[300px]">
-          <DailyDualLineChart data={filledDual} height="100%" />
+          <DailyDualLineChart data={filledDual} height={200} />
         </div>
       </div>
     </div>

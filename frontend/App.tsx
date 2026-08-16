@@ -2,7 +2,7 @@ import { Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
 import HomePage from './pages/HomePage'
 import StatsPage from './pages/StatsPage'
-import CategoryManager from './pages/CategoryManager'
+import CategoryPage from './pages/CategoryPage'
 import SettingsPage from './pages/SettingsPage'
 
 export default function App() {
@@ -11,7 +11,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<HomePage />} />
         <Route path="/stats" element={<StatsPage />} />
-        <Route path="/categories" element={<CategoryManager />} />
+        <Route path="/categories" element={<CategoryPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
     </Routes>

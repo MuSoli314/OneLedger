@@ -17,11 +17,17 @@ interface HomeFilterContextValue {
   setCustomRange: Dispatch<SetStateAction<{ start: string; end: string }>>
   paymentFilter: string
   setPaymentFilter: Dispatch<SetStateAction<string>>
+  /** 日常/非日常筛选：'' 不筛选 | 'daily' 只看日常 | 'nonDaily' 只看非日常（与支付方式筛选叠加） */
+  dailyFilter: '' | 'daily' | 'nonDaily'
+  setDailyFilter: Dispatch<SetStateAction<'' | 'daily' | 'nonDaily'>>
   selectedCats: Set<string>
   setSelectedCats: Dispatch<SetStateAction<Set<string>>>
   trendCategory: string
   setTrendCategory: Dispatch<SetStateAction<string>>
-  /** 清理支付方式 + 分类筛选（保留时间范围） */
+  /** 记账列表是否显示缺失日期的「+ 添加」快捷行（默认开，关闭后列表更简洁） */
+  showQuickAdd: boolean
+  setShowQuickAdd: Dispatch<SetStateAction<boolean>>
+  /** 清理支付方式 + 日常/非日常 + 分类筛选（保留时间范围） */
   clearFilters: () => void
 }
 
@@ -32,12 +38,15 @@ export function HomeFilterProvider({ children }: { children: ReactNode }) {
   const [historyMonth, setHistoryMonth] = useState('') // 仅 rangeMode='history' 时有效
   const [customRange, setCustomRange] = useState({ start: localDateString(), end: localDateString() })
   const [paymentFilter, setPaymentFilter] = useState('') // 按支付方式筛选列表，'' 表示不筛选
+  const [dailyFilter, setDailyFilter] = useState<'' | 'daily' | 'nonDaily'>('') // 按日常/非日常筛选列表，'' 表示不筛选
   // 按分类筛选：Set 里存的是「大类+小类」组合键（catKey）。选了某大类 = 它所有小类都选中
   const [selectedCats, setSelectedCats] = useState<Set<string>>(new Set())
   const [trendCategory, setTrendCategory] = useState('') // '' 表示「全天」（所有大类按月汇总）
+  const [showQuickAdd, setShowQuickAdd] = useState(true) // 记账列表「+ 添加」快捷行开关（默认开）
 
   const clearFilters = () => {
     setPaymentFilter('')
+    setDailyFilter('')
     setSelectedCats(new Set())
   }
 
@@ -52,10 +61,14 @@ export function HomeFilterProvider({ children }: { children: ReactNode }) {
         setCustomRange,
         paymentFilter,
         setPaymentFilter,
+        dailyFilter,
+        setDailyFilter,
         selectedCats,
         setSelectedCats,
         trendCategory,
         setTrendCategory,
+        showQuickAdd,
+        setShowQuickAdd,
         clearFilters,
       }}
     >

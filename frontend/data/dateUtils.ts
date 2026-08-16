@@ -1,5 +1,25 @@
 // 本地日期工具（避免 toISOString 的 UTC 时区问题：凌晨 0-8 点日期会错一天）
+import { format } from 'date-fns'
 import type { RangeMode } from './types'
+
+/** 日期显示为 "2026/08/16"（带 T00:00:00 按本地时间解析，避免 UTC 错一天） */
+export function formatDate(dateStr: string): string {
+  try {
+    return format(new Date(dateStr + 'T00:00:00'), 'yyyy/MM/dd')
+  } catch {
+    return dateStr
+  }
+}
+
+/** 日期对应的中文星期（周日…周六） */
+export function getWeekday(dateStr: string): string {
+  const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+  try {
+    return weekdays[new Date(dateStr + 'T00:00:00').getDay()]
+  } catch {
+    return ''
+  }
+}
 
 /** 本地日期字符串，格式 YYYY-MM-DD */
 export function localDateString(d: Date = new Date()): string {

@@ -25,6 +25,7 @@ dist-ssr
 
 # Rust / Tauri
 backend/target/
+backend/gen/
 *.rs.bk
 
 # Claude Code 工作文件（项目记忆 + 工作文档，不提交）

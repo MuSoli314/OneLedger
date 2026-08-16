@@ -11,6 +11,18 @@ declare module 'lunar-javascript' {
     getDayInChinese(): string
     /** 农历月（正月、二月…腊月） */
     getMonthInChinese(): string
+    /** 干支年（甲子、乙丑…癸亥） */
+    getYearInGanZhi(): string
+    /** 生肖（鼠、牛…猪） */
+    getYearShengXiao(): string
+    /** 干支月（丙寅、丁卯…） */
+    getMonthInGanZhi(): string
+    /** 干支日（甲子、乙丑…） */
+    getDayInGanZhi(): string
+    /** 老黄历「宜」事项列表（嫁娶、祭祀…） */
+    getDayYi(): string[]
+    /** 老黄历「忌」事项列表（盖屋、安葬…） */
+    getDayJi(): string[]
     /** 节气名（当天是节气时返回，否则返回空字符串） */
     getJieQi(): string
     /** 传统节日列表（除夕、春节、端午、中秋…） */

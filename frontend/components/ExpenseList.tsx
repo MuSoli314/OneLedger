@@ -1,24 +1,29 @@
+// 记账列表主组件：日期分组 + 缺失日期快捷行 + 行内编辑状态管理 + 完整编辑弹窗
+// （单条记录行 / 大类分组 / 添加弹层 / 支付方式统计已拆到独立组件）
 import { useState, useRef, useEffect } from 'react'
-import InlineSelect from './InlineSelect'
 import EditExpenseDialog from './EditExpenseDialog'
+import PaymentMethodTotals from './PaymentMethodTotals'
+import CategoryAddPopover from './CategoryAddPopover'
+import ExpenseCategoryGroup from './ExpenseCategoryGroup'
 import { useSettings } from '../contexts/SettingsContext'
 import { addExpense } from '../data/database'
 import { evaluateExpression } from '../data/calcUtils'
 import { useCategories } from '../contexts/CategoryContext'
+import { formatDate, getWeekday } from '../data/dateUtils'
 import type { Expense, ExpenseInput, TransactionType } from '../data/types'
-import { format } from 'date-fns'
+import type { LocalRow, EditField, EditForm } from './expenseListTypes'
 
 interface Props {
   expenses: Expense[]
   onDelete: (expense: Expense) => void
-  onUpdate: (id: number, category_l2: string, note: string, amount: number, payment_method: string, type: TransactionType, isNonDaily: boolean) => Promise<void>
+  onUpdate: (id: number, category_l2: string, note: string, amount: number, payment_method: string, type: TransactionType, is_non_daily: boolean) => Promise<void>
   /** 完整编辑（编辑弹窗）：全部字段含日期，input 直接为入库格式 */
   onUpdateFull: (id: number, input: ExpenseInput) => Promise<void>
   onRefresh?: () => void
   extraDates?: string[]
   /** 需要主动展开的日期（快捷添加日期 / 点击日历某天后，自动展开该天记录） */
   autoExpandDates?: string[]
-  /** 整月视图下缺失记录的日期（本月/上月/历史月份）— 列表里为这些日期补「+ 添加」快捷行 */
+  /** 当前时间范围下缺失记录的日期（任何范围：近一周/近一月/本月/上月/历史月份/自定义）— 列表里为这些日期补「+ 添加」快捷行 */
   missingDates?: string[]
   /** 点击「+ 添加」快捷行时回调（新增该缺失日期，行为与「添加日期」弹窗一致） */
   onAddDate?: (date: string) => void
@@ -28,39 +33,6 @@ interface Props {
   hasFilter?: boolean
   /** 搜索中：强制展开所有日期分组与大类分组，让命中的记录（含备注）直接可见 */
   searchActive?: boolean
-}
-
-interface LocalRow {
-  tempId: number
-  date: string
-  category_l1: string
-  category_l2: string
-  note: string
-  amount: number
-  payment_method: string
-  type: TransactionType
-  isNonDaily: boolean
-}
-
-/** 行内编辑可聚焦的字段 */
-type EditField = 'category_l2' | 'amount' | 'payment_method' | 'type' | 'note'
-
-function formatDate(dateStr: string): string {
-  try {
-    // 用 T00:00:00 按本地时间解析，避免 new Date('YYYY-MM-DD') 按 UTC 解析导致西半球时区日期错一天
-    return format(new Date(dateStr + 'T00:00:00'), 'yyyy/MM/dd')
-  } catch {
-    return dateStr
-  }
-}
-
-function getWeekday(dateStr: string): string {
-  const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
-  try {
-    return weekdays[new Date(dateStr + 'T00:00:00').getDay()]
-  } catch {
-    return ''
-  }
 }
 
 export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull, onRefresh, extraDates, autoExpandDates, missingDates, onAddDate, onDeleteDate, onDeleteCategory, hasFilter, searchActive }: Props) {
@@ -126,28 +98,14 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
     })
   }
 
-  const getCategoryIcon = (l1: string): string => {
-    return categories.find((c) => c.name === l1)?.icon || '📂'
-  }
-
-  const getSubCategories = (l1: string): string[] => {
-    return categories.find((c) => c.name === l1)?.children.map((c) => c.name) || []
-  }
-
   const getDefaultSubs = (l1: string) => {
-    return categories.find((c) => c.name === l1)?.children.filter((c) => c.isDefault) || []
+    return categories.find((c) => c.name === l1)?.children.filter((c) => c.is_default) || []
   }
 
   const [editingId, setEditingId] = useState<number | null>(null)
-  const [editForm, setEditForm] = useState({ category_l2: '', note: '', amount: '', payment_method: '', type: 'expense' as TransactionType, isNonDaily: false })
+  const [editForm, setEditForm] = useState<EditForm>({ category_l2: '', note: '', amount: '', payment_method: '', type: 'expense' as TransactionType, is_non_daily: false })
   // 进入编辑时聚焦哪个字段（点哪个格子聚焦哪个）
   const [focusField, setFocusField] = useState<EditField | null>(null)
-  // 编辑控件 refs，按 focusField 聚焦
-  const categoryL2Ref = useRef<HTMLButtonElement | null>(null)
-  const amountRef = useRef<HTMLInputElement | null>(null)
-  const paymentRef = useRef<HTMLButtonElement | null>(null)
-  const typeRef = useRef<HTMLButtonElement | null>(null)
-  const noteRef = useRef<HTMLInputElement | null>(null)
   const [addingDate, setAddingDate] = useState<string | null>(null)
   // 完整编辑弹窗当前编辑的记录（null = 未打开）
   const [editDialogExpense, setEditDialogExpense] = useState<Expense | null>(null)
@@ -161,7 +119,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
   const nextTempId = useRef(-1)
   // refs 保持最新值，避免闭包陈旧问题
   const editingIdRef = useRef<number | null>(null)
-  const editFormRef = useRef(editForm)
+  const editFormRef = useRef<EditForm>(editForm)
   const localRowsRef = useRef<LocalRow[]>([])
 
   editingIdRef.current = editingId
@@ -170,6 +128,12 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
 
   // 类型 code → 配置 查找表（含未定义的兜底）
   const txTypeByCode = new Map(txTypes.map((t) => [t.code, t]))
+
+  // 更新编辑表单并同步 ref（下拉选完同帧保存需读到最新值）
+  const handleEditFormChange = (form: EditForm) => {
+    setEditForm(form)
+    editFormRef.current = form
+  }
 
   const toggleCollapse = (key: string) => {
     setCollapsedMap((prev) => {
@@ -191,13 +155,13 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
     }
     setEditingId(expense.id)
     setFocusField(field)
-    setEditForm({
+    handleEditFormChange({
       category_l2: expense.category_l2,
       note: expense.note,
       amount: expense.amount.toString(),
       payment_method: expense.payment_method || '',
       type: expense.type || 'expense',
-      isNonDaily: expense.isNonDaily,
+      is_non_daily: expense.is_non_daily,
     })
   }
 
@@ -238,7 +202,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
         note: form.note,
         payment_method: form.payment_method || '',
         type: form.type || 'expense',
-        isNonDaily: form.isNonDaily,
+        is_non_daily: form.is_non_daily,
       })
       setLocalRows((prev) => prev.filter((r) => r.tempId !== tempId))
       // 保存期间用户可能已切到别的行，避免误关
@@ -269,7 +233,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
       evaluateExpression(form.amount) === expense.amount &&
       (form.payment_method || '') === (expense.payment_method || '') &&
       (form.type || 'expense') === (expense.type || 'expense') &&
-      form.isNonDaily === expense.isNonDaily
+      form.is_non_daily === expense.is_non_daily
     ) {
       setEditingId(null)
       setFocusField(null)
@@ -282,7 +246,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
       return
     }
     try {
-      await onUpdate(expense.id, form.category_l2, form.note, amountNum, form.payment_method || '', form.type || 'expense', form.isNonDaily)
+      await onUpdate(expense.id, form.category_l2, form.note, amountNum, form.payment_method || '', form.type || 'expense', form.is_non_daily)
       // 保存期间用户可能已切到别的行，避免误关
       if (editingIdRef.current === id) {
         setEditingId(null)
@@ -319,23 +283,6 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingId, expenses, onUpdate])
 
-  // 进入编辑态后，按 focusField 聚焦对应编辑控件
-  useEffect(() => {
-    if (editingId === null) return
-    const refMap: Record<EditField, React.RefObject<HTMLInputElement | HTMLButtonElement | null>> = {
-      category_l2: categoryL2Ref,
-      amount: amountRef,
-      payment_method: paymentRef,
-      type: typeRef,
-      note: noteRef,
-    }
-    const el = refMap[focusField || 'category_l2']?.current
-    if (!el) return
-    el.focus()
-    // 自由输入框（金额/备注）进入编辑时全选已有内容，方便直接输入替换；下拉按钮无需处理
-    if (el instanceof HTMLInputElement) el.select()
-  }, [editingId, focusField])
-
   // 按回车保存
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -349,11 +296,6 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
         saveRealRow(id)
       }
     }
-  }
-
-  const handleDeleteClick = (e: React.MouseEvent, expense: Expense) => {
-    e.stopPropagation()
-    onDelete(expense)
   }
 
   // 打开完整编辑弹窗：先退出任何行内编辑，避免弹窗打开后行内编辑的
@@ -383,7 +325,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
   }, [addingDate])
 
   // 直接添加指定小类（联动面板右侧点击具体小类）— 只加这一条，带默认值预填
-  const handleAddSubCategoryDirect = (date: string, l1: string, l2: string, resolvedSub?: { defaultNote: string; defaultPaymentMethod: string; defaultAmount: number; defaultType: TransactionType; defaultIsNonDaily: boolean }) => {
+  const handleAddSubCategoryDirect = (date: string, l1: string, l2: string, resolvedSub?: { default_note: string; default_payment_method: string; default_amount: number; default_type: TransactionType; default_is_non_daily: boolean }) => {
     const cat = categories.find((c) => c.name === l1)
     // 自定义提交时分类表可能还没刷新到，用已解析的小类兜底
     const sub = resolvedSub ?? cat?.children.find((c) => c.name === l2)
@@ -393,23 +335,23 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
       date,
       category_l1: l1,
       category_l2: l2,
-      note: sub?.defaultNote || '',
-      amount: sub?.defaultAmount || 0,
-      payment_method: sub?.defaultPaymentMethod || '',
-      type: sub?.defaultType || 'expense',
-      isNonDaily: sub?.defaultIsNonDaily || false,
+      note: sub?.default_note || '',
+      amount: sub?.default_amount || 0,
+      payment_method: sub?.default_payment_method || '',
+      type: sub?.default_type || 'expense',
+      is_non_daily: sub?.default_is_non_daily || false,
     }
     setLocalRows((prev) => [...prev, newRow])
     setEditingId(id)
     // 小类已选好，直接聚焦金额让用户输入
     setFocusField('amount')
-    setEditForm({
+    handleEditFormChange({
       category_l2: l2,
-      note: sub?.defaultNote || '',
-      amount: (sub?.defaultAmount || 0).toString(),
-      payment_method: sub?.defaultPaymentMethod || '',
-      type: sub?.defaultType || 'expense',
-      isNonDaily: sub?.defaultIsNonDaily || false,
+      note: sub?.default_note || '',
+      amount: (sub?.default_amount || 0).toString(),
+      payment_method: sub?.default_payment_method || '',
+      type: sub?.default_type || 'expense',
+      is_non_daily: sub?.default_is_non_daily || false,
     })
     // 展开该日期，让用户看到刚添加的记录
     setExpandedDates((prev) => new Set(prev).add(date))
@@ -434,11 +376,11 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
       }
     }
     const resolvedSub = cat.children.find((c) => c.name === name) ?? {
-      defaultNote: '',
-      defaultPaymentMethod: '',
-      defaultAmount: 0,
-      defaultType: 'expense' as TransactionType,
-      defaultIsNonDaily: false,
+      default_note: '',
+      default_payment_method: '',
+      default_amount: 0,
+      default_type: 'expense' as TransactionType,
+      default_is_non_daily: false,
     }
     setCustomName('')
     setCustomizingL1(null)
@@ -460,11 +402,11 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
           date,
           category_l1: l1,
           category_l2: sub.name,
-          note: sub.defaultNote || '',
-          amount: sub.defaultAmount || 0,
-          payment_method: sub.defaultPaymentMethod || '',
-          type: sub.defaultType || 'expense',
-          isNonDaily: sub.defaultIsNonDaily,
+          note: sub.default_note || '',
+          amount: sub.default_amount || 0,
+          payment_method: sub.default_payment_method || '',
+          type: sub.default_type || 'expense',
+          is_non_daily: sub.default_is_non_daily,
         })
       }
       setLocalRows((prev) => [...prev, ...newRows])
@@ -473,7 +415,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
       const lastId = newRows[newRows.length - 1].tempId
       setEditingId(lastId)
       setFocusField('amount')
-      setEditForm({ category_l2: lastSub.name, note: lastSub.defaultNote || '', amount: (lastSub.defaultAmount || 0).toString(), payment_method: lastSub.defaultPaymentMethod || '', type: lastSub.defaultType || 'expense', isNonDaily: lastSub.defaultIsNonDaily })
+      handleEditFormChange({ category_l2: lastSub.name, note: lastSub.default_note || '', amount: (lastSub.default_amount || 0).toString(), payment_method: lastSub.default_payment_method || '', type: lastSub.default_type || 'expense', is_non_daily: lastSub.default_is_non_daily })
     } else {
       // 没有默认小类 → 和老逻辑一样创建空行让用户选择
       handleAddSubCategory(date, l1)
@@ -518,13 +460,13 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
       amount: 0,
       payment_method: '',
       type: defaultExpenseCode || 'expense',
-      isNonDaily: false,
+      is_non_daily: false,
     }
     setLocalRows((prev) => [...prev, newRow])
     // 自动进入编辑
     setEditingId(id)
     setFocusField('category_l2')
-    setEditForm({ category_l2: '', note: '', amount: '0', payment_method: '', type: defaultExpenseCode || 'expense', isNonDaily: false })
+    handleEditFormChange({ category_l2: '', note: '', amount: '0', payment_method: '', type: defaultExpenseCode || 'expense', is_non_daily: false })
   }
 
   if (expenses.length === 0 && localRows.length === 0 && (!extraDates || extraDates.length === 0) && (!missingDates || missingDates.length === 0)) {
@@ -562,7 +504,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
         note: lr.note,
         payment_method: lr.payment_method,
         type: lr.type,
-        isNonDaily: lr.isNonDaily,
+        is_non_daily: lr.is_non_daily,
         created_at: '',
       })
     }
@@ -573,7 +515,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
   }
 
   // ===== 缺失日期快捷行 =====
-  // 整月视图（本月/上月/历史月份）下缺失记录的日期：全部缺失日期都补快捷入口。
+  // 当前时间范围（近一周/近一月/本月/上月/历史月份/自定义）下缺失记录的日期：全部缺失日期都补快捷入口。
   // 按连续（差 1 天）分段：段长 ≤3 天全部显示；段长 >3 天只显示两端，中间折叠成「+ 更多（N 天）」。
   // 已有日期集合 = 真实记录 + 本地临时行 + 手动添加的空白日期（groupedByDate 的所有键）
   const presentSet = new Set(Object.keys(groupedByDate))
@@ -736,65 +678,10 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
                 </span>
               </div>
               <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                {/* 支付方式统计（只显示金额 > 0 的） */}
-                <div className="hidden sm:flex items-center gap-1 flex-wrap">
-                  {(() => {
-                    const pmTotals: Record<string, number> = {}
-                    for (const e of items) {
-                      const pm = e.payment_method || ''
-                      if (pm && txTypeByCode.get(e.type)?.category === 'expense') pmTotals[pm] = (pmTotals[pm] || 0) + e.amount
-                    }
-                    // 按设置页中的支付方式顺序展示（只显示金额 > 0 的；已从设置删除的历史支付方式排在最后兜底）
-                    const orphanPms = Object.keys(pmTotals).filter((pm) => !paymentMethods.some((p) => p.name === pm))
-                    const ordered = [...paymentMethods.map((p) => p.name), ...orphanPms]
-                    return ordered
-                      .filter((pm) => (pmTotals[pm] || 0) > 0)
-                      .map((pm) => {
-                        const pmInfo = paymentMethods.find((p) => p.name === pm)
-                        const total = pmTotals[pm]
-                        return (
-                          <span key={pm} className="relative group inline-flex items-center justify-center gap-0.5 w-[76px] text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md cursor-pointer">
-                            <span>{pmInfo?.icon || ''}</span>
-                            <span className="tabular-nums font-medium">¥{total.toFixed(2)}</span>
-                            {/* 悬浮气泡（CSS 自绘，WebView 也支持） */}
-                            <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 -translate-y-1 whitespace-nowrap rounded-md bg-slate-800 text-white text-xs px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity z-30 shadow-lg">
-                              {pm}
-                            </span>
-                          </span>
-                        )
-                      })
-                  })()}
-                </div>
-
+                {/* 支付方式统计（桌面版） */}
+                <PaymentMethodTotals items={items} paymentMethods={paymentMethods} txTypeByCode={txTypeByCode} className="hidden sm:flex" />
                 {/* 支付方式统计（移动端） */}
-                <div className="sm:hidden flex items-center gap-1 flex-wrap">
-                  {(() => {
-                    const pmTotals: Record<string, number> = {}
-                    for (const e of items) {
-                      const pm = e.payment_method || ''
-                      if (pm && txTypeByCode.get(e.type)?.category === 'expense') pmTotals[pm] = (pmTotals[pm] || 0) + e.amount
-                    }
-                    // 按设置页中的支付方式顺序展示（只显示金额 > 0 的；已从设置删除的历史支付方式排在最后兜底）
-                    const orphanPms = Object.keys(pmTotals).filter((pm) => !paymentMethods.some((p) => p.name === pm))
-                    const ordered = [...paymentMethods.map((p) => p.name), ...orphanPms]
-                    return ordered
-                      .filter((pm) => (pmTotals[pm] || 0) > 0)
-                      .map((pm) => {
-                        const pmInfo = paymentMethods.find((p) => p.name === pm)
-                        const total = pmTotals[pm]
-                        return (
-                          <span key={pm} className="relative group inline-flex items-center justify-center gap-0.5 w-[76px] text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md cursor-pointer">
-                            <span>{pmInfo?.icon || ''}</span>
-                            <span className="tabular-nums font-medium">¥{total.toFixed(2)}</span>
-                            {/* 悬浮气泡（CSS 自绘，WebView 也支持） */}
-                            <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 -translate-y-1 whitespace-nowrap rounded-md bg-slate-800 text-white text-xs px-2 py-1 opacity-0 group-hover:opacity-100 transition-opacity z-30 shadow-lg">
-                              {pm}
-                            </span>
-                          </span>
-                        )
-                      })
-                  })()}
-                </div>
+                <PaymentMethodTotals items={items} paymentMethods={paymentMethods} txTypeByCode={txTypeByCode} className="sm:hidden" />
 
                 <span className="inline-flex items-center gap-1 flex-shrink-0 text-sm">
                   {/* 「合计 + 金额」作为一个固定宽度整体，笔数独立固定宽度 */}
@@ -819,104 +706,22 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
 
                   {/* 大类+小类联动选择弹出（已存在的大类灰色不可选；悬停大类右侧联动显示小类） */}
                   {addingDate === date && (
-                    <div className="absolute right-0 top-full mt-1 z-30 flex bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden">
-                      {/* 左列：大类列表 */}
-                      <div className="w-40 max-h-72 overflow-y-auto py-1">
-                        {customizingCategory ? (
-                          <input
-                            autoFocus
-                            value={customName}
-                            onChange={(e) => setCustomName(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleCustomCategorySubmit()
-                              if (e.key === 'Escape') { setCustomizingCategory(false); setCustomName('') }
-                            }}
-                            onBlur={() => { setCustomizingCategory(false); setCustomName('') }}
-                            placeholder="输入大类名，回车确认"
-                            className="w-full h-7 my-0.5 px-2 border border-primary rounded-lg text-sm bg-white focus:outline-none"
-                          />
-                        ) : (
-                          <button
-                            onClick={() => { setCustomizingCategory(true); setCustomName('') }}
-                            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-primary hover:bg-primary/10 transition-colors"
-                          >
-                            <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                            </svg>
-                            <span>自定义</span>
-                          </button>
-                        )}
-                        {categories.map((cat) => {
-                          const disabled = existingL1s.has(cat.name)
-                          return (
-                            <button
-                              key={cat.name}
-                              disabled={disabled}
-                              onMouseEnter={() => !disabled && setHoverL1(cat.name)}
-                              onClick={() => !disabled && handleAddCategory(date, cat.name)}
-                              className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm transition-colors ${
-                                disabled
-                                  ? 'text-slate-300 cursor-not-allowed'
-                                  : hoverL1 === cat.name
-                                  ? 'bg-primary/5 text-primary'
-                                  : 'text-slate-700 hover:bg-slate-50'
-                              }`}
-                            >
-                              <span className={`text-lg ${disabled ? 'opacity-40' : ''}`}>{cat.icon}</span>
-                              <span>{cat.name}</span>
-                              {disabled && <span className="text-[10px] ml-auto text-slate-300">已有</span>}
-                            </button>
-                          )
-                        })}
-                      </div>
-                      {/* 右列：当前悬停大类的小类 */}
-                      <div className="w-40 max-h-72 overflow-y-auto py-1 border-l border-slate-100 bg-slate-50/50">
-                        {customizingCategory ? (
-                          <div className="px-3 py-1.5 text-sm text-slate-400">确认大类后继续选择小类</div>
-                        ) : hoverL1 ? (
-                          customizingL1 === hoverL1 ? (
-                            <input
-                              autoFocus
-                              value={customName}
-                              onChange={(e) => setCustomName(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleCustomSubmit(date, hoverL1)
-                                if (e.key === 'Escape') { setCustomizingL1(null); setCustomName('') }
-                              }}
-                              onBlur={() => { setCustomizingL1(null); setCustomName('') }}
-                              placeholder="输入小类名，回车确认"
-                              className="w-full h-7 my-0.5 px-2 border border-primary rounded-lg text-sm bg-white focus:outline-none"
-                            />
-                          ) : (
-                            <button
-                              onClick={() => { setCustomizingL1(hoverL1); setCustomName('') }}
-                              className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-primary hover:bg-primary/10 transition-colors"
-                            >
-                              <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                              </svg>
-                              <span>自定义</span>
-                            </button>
-                          )
-                        ) : null}
-                        {hoverL1 && (
-                          getSubCategories(hoverL1).length > 0 ? (
-                            getSubCategories(hoverL1).map((sc) => (
-                              <button
-                                key={sc}
-                                onClick={() => handleAddSubCategoryDirect(date, hoverL1, sc)}
-                                className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-primary/10 hover:text-primary transition-colors"
-                              >
-                                <span className="w-1.5 h-1.5 rounded-full bg-slate-300 flex-shrink-0" />
-                                <span>{sc}</span>
-                              </button>
-                            ))
-                          ) : (
-                            <div className="px-3 py-1.5 text-sm text-slate-400">暂无小类</div>
-                          )
-                        )}
-                      </div>
-                    </div>
+                    <CategoryAddPopover
+                      categories={categories}
+                      existingL1s={existingL1s}
+                      hoverL1={hoverL1}
+                      customizingL1={customizingL1}
+                      customizingCategory={customizingCategory}
+                      customName={customName}
+                      onHoverL1={setHoverL1}
+                      onCustomizingL1={setCustomizingL1}
+                      onCustomizingCategory={setCustomizingCategory}
+                      onCustomName={setCustomName}
+                      onAddCategory={(l1) => handleAddCategory(date, l1)}
+                      onAddSubDirect={(l1, l2) => handleAddSubCategoryDirect(date, l1, l2)}
+                      onCustomCategorySubmit={handleCustomCategorySubmit}
+                      onCustomSubmit={(l1) => handleCustomSubmit(date, l1)}
+                    />
                   )}
                 </div>
 
@@ -965,340 +770,36 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
                   const idxB = categories.findIndex((c) => c.name === b)
                   return idxA - idxB
                 })
-                .map(([l1, l1Items], l1Idx, l1Arr) => {
-                const l1Total = l1Items.reduce((s, e) => s + (txTypeByCode.get(e.type)?.category === 'ignore' ? 0 : e.amount), 0)
-                // 按分类管理器中的小类顺序显示
-                const cat = categories.find((c) => c.name === l1)
-                const subOrder = new Map(cat?.children.map((c, i) => [c.name, i]) || [])
-                const sortedL1Items = [...l1Items].sort((a, b) => {
-                  const ai = subOrder.get(a.category_l2) ?? 999
-                  const bi = subOrder.get(b.category_l2) ?? 999
-                  return ai - bi
-                })
-                const isLastL1 = l1Idx === l1Arr.length - 1
-                const collapseKey = `${date}|${l1}`
-                // 搜索中强制展开大类（搜索结果直接可见）；否则按用户手动折叠状态
-                const collapsed = !searchActive && collapsedMap.has(collapseKey)
-                return (
-                  <div key={l1}>
-                    {/* 大类标题行（可点击折叠） */}
-                    <button
-                      onClick={() => toggleCollapse(collapseKey)}
-                      className={`w-full flex items-center justify-between px-4 py-2 bg-slate-50 hover:bg-slate-100 transition-colors text-left cursor-pointer ${
-                        isLastL1 && collapsed ? '' : 'border-b border-slate-50'
-                      } ${collapsed ? 'rounded-b-xl' : ''}`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <svg
-                          className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${
-                            collapsed ? '-rotate-90' : ''
-                          }`}
-                          fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                        >
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                        <span className="text-lg">{getCategoryIcon(l1)}</span>
-                        <span className="text-base font-semibold text-slate-700">{l1}</span>
-                        <span className="text-sm text-slate-400 ml-1">
-                          {l1Items.length}笔
-                        </span>
-                      </div>
-                      <span className="text-sm font-medium text-slate-500 tabular-nums">
-                        合计 ¥{l1Total.toFixed(2)}
-                      </span>
-                      {onDeleteCategory && l1Items.length > 0 && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); onDeleteCategory(date, l1) }}
-                          className="ml-1.5 w-6 h-6 flex items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors flex-shrink-0"
-                          title="删除本大类所有记录"
-                        >
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      )}
-                    </button>
-
-                    {/* 该大类的每一条记录（折叠时隐藏） */}
-                    {!collapsed && sortedL1Items.map((expense, itemIdx) => {
-                      const isLastItem = itemIdx === sortedL1Items.length - 1 && isLastL1
-                      const isEditing = editingId === expense.id
-                      const isLocal = expense.id < 0
-                      const rowTx = txTypeByCode.get(expense.type)
-                      // 金额为 0 的记录标红提醒（非 ignore 类型；编辑态仍走 indigo 编辑样式）
-                      const isZeroAmount = expense.amount === 0 && rowTx?.category !== 'ignore'
-                      return (
-                        <div
-                          key={expense.id}
-                          ref={isEditing ? editRef : undefined}
-                          className={`flex items-center gap-2 px-2 pl-2 py-1 text-base transition-colors ${
-                            isEditing
-                              ? 'bg-indigo-50 border-l-2 border-l-primary'
-                              : isZeroAmount
-                              ? 'bg-red-100 hover:bg-red-200 border-l-2 border-l-red-500 cursor-pointer group'
-                              : rowTx?.category === 'ignore'
-                              ? 'bg-slate-300 hover:bg-slate-400 cursor-pointer group'
-                              : expense.isNonDaily
-                              ? 'bg-slate-100/60 hover:bg-slate-100 cursor-pointer group'
-                              : 'hover:bg-slate-50 cursor-pointer group'
-                          } ${isLastItem && !isLocal ? '' : 'border-b border-slate-50'}`}
-                          onClick={() => !isEditing && startEditing(expense)}
-                        >
-                          {/* 日常/非日常徽章 */}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              if (isLocal || isEditing) {
-                                // 新增本地行或已在编辑态：只改本地表单（新增行由行外点击/回车统一入库；编辑行由行外点击/回车统一保存）
-                                const f = { ...editForm, isNonDaily: !editForm.isNonDaily }
-                                setEditForm(f)
-                                editFormRef.current = f
-                                return
-                              }
-                              // 非编辑态真实行：立即切换保存（不改其它字段）
-                              const next = !expense.isNonDaily
-                              onUpdate(expense.id, expense.category_l2, expense.note, expense.amount, expense.payment_method || '', expense.type || 'expense', next)
-                                .then(() => onRefresh?.())
-                                .catch((err) => console.error('保存失败', err))
-                            }}
-                            className={`w-[52px] h-5 flex-shrink-0 flex items-center justify-center rounded-md text-[10px] transition-colors ${
-                              ((isEditing || isLocal) ? editForm.isNonDaily : expense.isNonDaily)
-                                ? 'bg-slate-200 text-slate-500 hover:bg-slate-300'
-                                : 'bg-transparent text-slate-300 border border-dashed border-slate-200 hover:border-slate-400 hover:text-slate-500'
-                            }`}
-                            title={isEditing || isLocal ? '切换非日常标记' : (expense.isNonDaily ? '非日常（点击改为日常）' : '日常（点击改为非日常）')}
-                          >
-                            {((isEditing || isLocal) ? editForm.isNonDaily : expense.isNonDaily) ? '非日常' : '日常'}
-                          </button>
-                          {/* 小类 */}
-                          {isEditing ? (
-                            <div className="w-[110px] flex-shrink-0">
-                              <InlineSelect
-                                value={editForm.category_l2}
-                                options={getSubCategories(expense.category_l1).map((sc) => ({ value: sc, label: sc }))}
-                                placeholder="请选择小类"
-                                initialOpen={focusField === 'category_l2'}
-                                textColor={editForm.category_l2 ? 'text-slate-700' : 'text-slate-400'}
-                                ref={categoryL2Ref}
-                                className="w-full"
-                                onChange={(newL2) => {
-                                  if (isLocal) {
-                                    // 新增行：选择小类时自动加载模板默认值
-                                    const cat = categories.find((c) => c.name === expense.category_l1)
-                                    const sub = cat?.children.find((c) => c.name === newL2)
-                                    setEditForm({
-                                      category_l2: newL2,
-                                      note: sub?.defaultNote || '',
-                                      payment_method: sub?.defaultPaymentMethod || '',
-                                      amount: sub?.defaultAmount ? sub.defaultAmount.toString() : '0',
-                                      type: sub?.defaultType || 'expense',
-                                      isNonDaily: sub?.defaultIsNonDaily || false,
-                                    })
-                                  } else {
-                                    // 已有记录：只改小类，保留原金额/备注/支付方式，选完即自动保存退出编辑
-                                    const newForm = { ...editForm, category_l2: newL2 }
-                                    setEditForm(newForm)
-                                    editFormRef.current = newForm
-                                    saveRealRow(expense.id)
-                                  }
-                                }}
-                              />
-                            </div>
-                          ) : (
-                            <div
-                              className="w-[110px] min-w-0 flex-shrink-0 text-right"
-                              onClick={(e) => { e.stopPropagation(); startEditing(expense, 'category_l2') }}
-                            >
-                              <span className={`text-sm font-medium ${expense.category_l2 ? 'text-slate-700' : 'text-slate-300 italic'}`}>
-                                {expense.category_l2 || '未设置'}
-                              </span>
-                            </div>
-                          )}
-
-                          {/* 金额 */}
-                          <div className="flex items-center gap-2 flex-shrink-0">
-                            {isEditing ? (
-                              <div className="w-[90px]">
-                                <input
-                                  type="text"
-                                  inputMode="decimal"
-                                  value={editForm.amount}
-                                  onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })}
-                                  className="w-full h-8 text-xs border border-slate-200 rounded-lg px-2 bg-white focus:outline-none focus:border-primary text-right font-semibold tabular-nums"
-                                  style={{ color: txTypeByCode.get(editForm.type)?.category === 'income' ? '#10b981' : txTypeByCode.get(editForm.type)?.category === 'ignore' ? '#94a3b8' : '#ef4444' }}
-                                  ref={amountRef}
-                                  onClick={(e) => e.stopPropagation()}
-                                  onKeyDown={handleKeyDown}
-                                  placeholder="金额"
-                                />
-                              </div>
-                            ) : (
-                              <span
-                                className={`text-sm font-semibold tabular-nums w-[100px] text-right ${
-                                  rowTx?.category === 'income' ? 'text-emerald-500' : rowTx?.category === 'ignore' ? 'text-slate-400' : 'text-expense'
-                                }`}
-                                onClick={(e) => { e.stopPropagation(); startEditing(expense, 'amount') }}
-                              >
-                                {rowTx?.category === 'income' ? '+' : rowTx?.category === 'ignore' ? '' : '-'}¥{expense.amount.toFixed(2)}
-                              </span>
-                            )}
-                          </div>
-
-                          {/* 支付方式 */}
-                          {isEditing ? (
-                            <div className="w-[90px] flex-shrink-0">
-                              <InlineSelect
-                                value={editForm.payment_method}
-                                options={paymentMethods.map((pm) => ({ value: pm.name, label: <span className="inline-flex items-center gap-1">{pm.icon} {pm.name}</span> }))}
-                                placeholder="支付方式"
-                                initialOpen={focusField === 'payment_method'}
-                                textColor="text-slate-500"
-                                ref={paymentRef}
-                                className="w-full"
-                                onChange={(v) => {
-                                  const newForm = { ...editForm, payment_method: v }
-                                  setEditForm(newForm)
-                                  // 已有记录：选完即自动保存退出编辑；新增行仅更新表单
-                                  if (!isLocal) {
-                                    editFormRef.current = newForm
-                                    saveRealRow(expense.id)
-                                  }
-                                }}
-                              />
-                            </div>
-                          ) : (
-                            expense.payment_method ? (
-                              <div
-                                className="w-[90px] flex-shrink-0 flex justify-end"
-                                onClick={(e) => { e.stopPropagation(); startEditing(expense, 'payment_method') }}
-                              >
-                                <span className="inline-flex items-center gap-1 text-sm text-slate-400 bg-slate-100 px-2 py-1 rounded-full whitespace-nowrap">
-                                  {paymentMethods.find((pm) => pm.name === expense.payment_method)?.icon || ''}
-                                  {expense.payment_method}
-                                </span>
-                              </div>
-                            ) : (
-                              <div
-                                className="w-[90px] flex-shrink-0"
-                                onClick={(e) => { e.stopPropagation(); startEditing(expense, 'payment_method') }}
-                              />
-                            )
-                          )}
-
-                          {/* 收支类型 */}
-                          {isEditing ? (
-                            <div className="w-[80px] flex-shrink-0">
-                              <InlineSelect
-                                value={editForm.type}
-                                options={txTypes.map((t) => ({ value: t.code, label: <span className="inline-flex items-center gap-1">{t.icon} {t.name}</span> }))}
-                                initialOpen={focusField === 'type'}
-                                textColor="text-slate-600"
-                                ref={typeRef}
-                                className="w-full"
-                                onChange={(v) => {
-                                  const newForm = { ...editForm, type: v as TransactionType }
-                                  setEditForm(newForm)
-                                  // 已有记录：选完即自动保存退出编辑；新增行仅更新表单
-                                  if (!isLocal) {
-                                    editFormRef.current = newForm
-                                    saveRealRow(expense.id)
-                                  }
-                                }}
-                              />
-                            </div>
-                          ) : (
-                            <div
-                              className="w-[80px] flex-shrink-0 flex justify-end"
-                              onClick={(e) => { e.stopPropagation(); startEditing(expense, 'type') }}
-                            >
-                              <span className={`inline-flex items-center gap-1 text-sm px-2 py-1 rounded-full whitespace-nowrap ${
-                                !rowTx ? 'text-slate-500 bg-slate-200'
-                                  : rowTx.category === 'expense' ? 'text-red-500 bg-red-50'
-                                  : rowTx.category === 'income' ? 'text-emerald-600 bg-emerald-50'
-                                  : 'text-slate-500 bg-slate-200'
-                              }`}>
-                                {rowTx ? `${rowTx.icon} ${rowTx.name}` : '🚫 未定义'}
-                              </span>
-                            </div>
-                          )}
-
-                          {/* 备注 */}
-                          {isEditing ? (
-                            <div className="flex-1 min-w-0">
-                              <input
-                                type="text"
-                                value={editForm.note}
-                                onChange={(e) => setEditForm({ ...editForm, note: e.target.value })}
-                                placeholder="备注（可选）"
-                                className="w-full h-8 text-xs border border-slate-200 rounded-lg px-2 bg-white focus:outline-none focus:border-primary text-slate-700"
-                                ref={noteRef}
-                                onClick={(e) => e.stopPropagation()}
-                                onKeyDown={handleKeyDown}
-                              />
-                            </div>
-                          ) : (
-                            <div
-                              className="flex-1 min-w-0"
-                              onClick={(e) => { e.stopPropagation(); startEditing(expense, 'note') }}
-                            >
-                              <span className="text-sm text-slate-400 truncate block">
-                                {expense.note || '-'}
-                              </span>
-                            </div>
-                          )}
-
-                          {/* 编辑按钮（完整信息弹窗，可改日期；本地未入库的临时行不显示） */}
-                          {!isLocal && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); openEditDialog(expense) }}
-                              className={`w-7 h-7 flex items-center justify-center rounded-lg transition-colors flex-shrink-0 ${
-                                isEditing
-                                  ? 'text-slate-400 hover:bg-primary/10 hover:text-primary'
-                                  : 'opacity-0 group-hover:opacity-100 text-slate-400 hover:bg-primary/10 hover:text-primary'
-                              }`}
-                              title="编辑"
-                            >
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                              </svg>
-                            </button>
-                          )}
-
-                          {/* 删除按钮 */}
-                          <button
-                            onClick={(e) => handleDeleteClick(e, expense)}
-                            className={`w-7 h-7 flex items-center justify-center rounded-lg transition-colors flex-shrink-0 ${
-                              isEditing
-                                ? 'text-slate-400 hover:bg-red-50 hover:text-red-500'
-                                : 'opacity-0 group-hover:opacity-100 text-slate-400 hover:bg-red-50 hover:text-red-500'
-                            }`}
-                            title="删除"
-                          >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                        </div>
-                      )
-                    })}
-
-                    {/* 添加小类按钮（折叠时也隐藏） */}
-                    {!collapsed && (
-                      <button
-                        onClick={() => handleAddSubCategory(date, l1)}
-                        className={`w-full flex items-center gap-2 px-4 pl-16 py-2.5 text-sm text-slate-400 hover:text-primary hover:bg-primary/5 transition-colors border-b border-slate-50 ${
-                          isLastL1 ? '' : ''
-                        }`}
-                      >
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                        </svg>
-                        <span>添加小类</span>
-                      </button>
-                    )}
-                  </div>
-                )
-              }))}
+                .map(([l1, l1Items], l1Idx, l1Arr) => (
+                  <ExpenseCategoryGroup
+                    key={l1}
+                    date={date}
+                    l1={l1}
+                    l1Items={l1Items}
+                    isLastL1={l1Idx === l1Arr.length - 1}
+                    collapsedMap={collapsedMap}
+                    searchActive={searchActive}
+                    categories={categories}
+                    paymentMethods={paymentMethods}
+                    txTypeByCode={txTypeByCode}
+                    onToggleCollapse={toggleCollapse}
+                    onDeleteCategory={onDeleteCategory}
+                    onAddSubCategory={handleAddSubCategory}
+                    editingId={editingId}
+                    editForm={editForm}
+                    focusField={focusField}
+                    editRef={editRef}
+                    onEditFormChange={handleEditFormChange}
+                    onStartEditing={startEditing}
+                    onSaveRow={saveRealRow}
+                    onKeyDown={handleKeyDown}
+                    onDelete={onDelete}
+                    onOpenEditDialog={openEditDialog}
+                    onUpdate={onUpdate}
+                    onRefresh={onRefresh}
+                  />
+                ))
+              )}
             </div>
             )}
           </div>

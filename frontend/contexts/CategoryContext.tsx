@@ -23,12 +23,12 @@ interface CategoryContextValue {
   deleteCategory: (id: number) => Promise<void>
   updateCategoryName: (id: number, name: string) => Promise<void>
   updateCategoryIcon: (id: number, icon: string) => Promise<void>
-  toggleCategoryDefault: (id: number, isDefault: boolean) => Promise<void>
+  toggleCategoryDefault: (id: number, is_default: boolean) => Promise<void>
   addSubCategory: (categoryId: number, name: string) => Promise<number>
   deleteSubCategory: (id: number) => Promise<void>
   updateSubCategoryName: (id: number, name: string) => Promise<void>
-  toggleSubCategoryDefault: (id: number, isDefault: boolean) => Promise<void>
-  updateSubCategoryDefaults: (id: number, defaults: { defaultNote?: string; defaultPaymentMethod?: string; defaultAmount?: number; defaultType?: TransactionType; defaultIsNonDaily?: boolean }) => Promise<void>
+  toggleSubCategoryDefault: (id: number, is_default: boolean) => Promise<void>
+  updateSubCategoryDefaults: (id: number, defaults: { default_note?: string; default_payment_method?: string; default_amount?: number; default_type?: TransactionType; default_is_non_daily?: boolean }) => Promise<void>
   reorderCategories: (orderedIds: number[]) => Promise<void>
   reorderSubCategories: (orderedIds: number[]) => Promise<void>
 }
@@ -74,8 +74,8 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
     await refresh()
   }, [refresh])
 
-  const toggleCategoryDefault = useCallback(async (id: number, isDefault: boolean) => {
-    await dbToggleCategoryDefault(id, isDefault)
+  const toggleCategoryDefault = useCallback(async (id: number, is_default: boolean) => {
+    await dbToggleCategoryDefault(id, is_default)
     await refresh()
   }, [refresh])
 
@@ -95,12 +95,12 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
     await refresh()
   }, [refresh])
 
-  const toggleSubCategoryDefault = useCallback(async (id: number, isDefault: boolean) => {
-    await dbToggleSubCategoryDefault(id, isDefault)
+  const toggleSubCategoryDefault = useCallback(async (id: number, is_default: boolean) => {
+    await dbToggleSubCategoryDefault(id, is_default)
     await refresh()
   }, [refresh])
 
-  const updateSubCategoryDefaults = useCallback(async (id: number, defaults: { defaultNote?: string; defaultPaymentMethod?: string; defaultAmount?: number; defaultType?: TransactionType; defaultIsNonDaily?: boolean }) => {
+  const updateSubCategoryDefaults = useCallback(async (id: number, defaults: { default_note?: string; default_payment_method?: string; default_amount?: number; default_type?: TransactionType; default_is_non_daily?: boolean }) => {
     await dbUpdateSubCategoryDefaults(id, defaults)
     await refresh()
   }, [refresh])
