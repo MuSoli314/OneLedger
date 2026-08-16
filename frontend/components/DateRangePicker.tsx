@@ -25,6 +25,8 @@ export default function DateRangePicker({ start, end, onChange, onComplete, onCa
   })
   // 只选了开始日期后，鼠标悬浮预览用
   const [hovered, setHovered] = useState<Date | undefined>()
+  // 打开时默认展示「上月 + 本月」两个月份（第一个显示 defaultMonth，第二个自动为下一个月）
+  const defaultMonth = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1)
 
   // 预览区间：开始日期 + 悬浮日期（自动处理两个方向），仅在未选结束日期时生效
   const displayRange: DateRange | undefined =
@@ -72,6 +74,7 @@ export default function DateRangePicker({ start, end, onChange, onComplete, onCa
           onDayMouseLeave={() => setHovered(undefined)}
           locale={zhCN}
           numberOfMonths={2}
+          defaultMonth={defaultMonth}
           captionLayout="dropdown"
           startMonth={MIN_DATE}
           endMonth={MAX_DATE}

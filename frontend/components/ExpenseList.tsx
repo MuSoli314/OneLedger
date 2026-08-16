@@ -40,7 +40,8 @@ type EditField = 'category_l2' | 'amount' | 'payment_method' | 'type' | 'note'
 
 function formatDate(dateStr: string): string {
   try {
-    return format(new Date(dateStr), 'yyyy/MM/dd')
+    // 用 T00:00:00 按本地时间解析，避免 new Date('YYYY-MM-DD') 按 UTC 解析导致西半球时区日期错一天
+    return format(new Date(dateStr + 'T00:00:00'), 'yyyy/MM/dd')
   } catch {
     return dateStr
   }
@@ -49,7 +50,7 @@ function formatDate(dateStr: string): string {
 function getWeekday(dateStr: string): string {
   const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
   try {
-    return weekdays[new Date(dateStr).getDay()]
+    return weekdays[new Date(dateStr + 'T00:00:00').getDay()]
   } catch {
     return ''
   }
@@ -398,8 +399,9 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
     }
     setCustomName('')
     setCustomizingL1(null)
-    // 等待分类刷新后自动带出默认值添加一行（新小类默认值用已解析的兜底）
-    setTimeout(() => handleAddSubCategoryDirect(date, l1, name, resolvedSub), 0)
+    // await 期间 addSubCategory 已触发分类刷新，React 会把分类更新与新增本地行合并到同一次渲染，
+    // 直接添加即可（新小类会在同一帧进入下拉选项），无需 setTimeout 猜刷新时机。
+    handleAddSubCategoryDirect(date, l1, name, resolvedSub)
   }
 
   // 点击左栏大类：有默认小类 → 批量添加所有默认小类行；没有 → 建一个空行让用户自选
@@ -594,7 +596,8 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
         .sort(([a], [b]) => b.localeCompare(a))
         .map(([date, items]) => {
         const isQuickRow = quickDates.has(date)
-        const dayTotal = items.reduce((sum, e) => sum + (txTypeByCode.get(e.type)?.category === 'ignore' ? 0 : e.amount), 0)
+        // 每日小计只统计「计入支出」的记录（与蓝色卡/右栏统计口径一致；收入、不计类型不参与）
+        const dayTotal = items.reduce((sum, e) => sum + (txTypeByCode.get(e.type)?.category === 'expense' ? e.amount : 0), 0)
 
         // 在该日内按一级分类分组
         const groupedByL1: Record<string, Expense[]> = {}
@@ -677,7 +680,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                     const pmTotals: Record<string, number> = {}
                     for (const e of items) {
                       const pm = e.payment_method || ''
-                      if (pm && e.type !== 'ignore') pmTotals[pm] = (pmTotals[pm] || 0) + e.amount
+                      if (pm && txTypeByCode.get(e.type)?.category === 'expense') pmTotals[pm] = (pmTotals[pm] || 0) + e.amount
                     }
                     return Object.entries(pmTotals)
                       .filter(([, total]) => total > 0)
@@ -703,7 +706,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                     const pmTotals: Record<string, number> = {}
                     for (const e of items) {
                       const pm = e.payment_method || ''
-                      if (pm && e.type !== 'ignore') pmTotals[pm] = (pmTotals[pm] || 0) + e.amount
+                      if (pm && txTypeByCode.get(e.type)?.category === 'expense') pmTotals[pm] = (pmTotals[pm] || 0) + e.amount
                     }
                     return Object.entries(pmTotals)
                       .filter(([, total]) => total > 0)
@@ -865,8 +868,22 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
             {!isQuickRow && expandedDates.has(date) && (
             <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
               {Object.entries(groupedByL1).length === 0 ? (
-                <div className="px-4 py-6 text-center text-slate-300 text-xs">
-                  点击日期旁的 <span className="inline-flex items-center gap-0.5 text-primary">➕</span> 添加消费分类
+                <div className="px-4 py-4 text-center">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setAddingDate(addingDate === date ? null : date)
+                      setHoverL1(null)
+                      setCustomizingL1(null)
+                      setCustomizingCategory(false)
+                      setCustomName('')
+                    }}
+                    className="inline-flex items-center gap-1.5 text-sm text-primary hover:bg-primary/10 rounded-lg px-3 py-1.5 transition-colors"
+                    title="添加消费大类"
+                  >
+                    <span className="text-base leading-none">➕</span>
+                    <span>添加</span>
+                  </button>
                 </div>
               ) : (
               /* 按 categories 固定顺序排序 */
@@ -919,10 +936,10 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                       {onDeleteCategory && l1Items.length > 0 && (
                         <button
                           onClick={(e) => { e.stopPropagation(); onDeleteCategory(date, l1) }}
-                          className="ml-1.5 w-5 h-5 flex items-center justify-center rounded text-slate-300 hover:bg-red-50 hover:text-red-500 transition-colors flex-shrink-0"
+                          className="ml-1.5 w-6 h-6 flex items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors flex-shrink-0"
                           title="删除本大类所有记录"
                         >
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                           </svg>
                         </button>

@@ -20,19 +20,24 @@
 
 ### 2. 消费分类体系（二级）
 
+> 实际数据以 `frontend/data/categories.ts` 为准（小类名含 emoji 前缀，用户可在「分类管理」页在线增删改），下表为当前默认种子。
+>
+> **默认小类预设**（记账时自动带出、参与「添加某天」自动记账）：🍜 餐饮饮食的 **🥚早餐 / 🍚午餐 / 🍜晚餐**。
+> 新装库播种即默认；老库由 `database.ts` 迁移 v1 用 SQLite `user_version` 一次性回填（置 1 后不再执行，用户在分类管理页手动取消的默认不会被改回）。
+
 | 一级大类 | 二级小类 |
 |---------|---------|
-| 🍜 餐饮饮食 | 早餐、午餐、晚餐、零食饮料、水果、外卖、买菜做饭 |
-| 🚗 交通出行 | 公交地铁、出租车/网约车、加油充电、停车费、火车高铁、飞机机票 |
-| 🛒 购物消费 | 服饰鞋包、数码产品、家居用品、美妆护肤、日用百货 |
-| 🏠 住房居家 | 房租/房贷、水电燃气、物业费、维修保养、日用品 |
-| 🎮 娱乐休闲 | 电影演出、运动健身、游戏充值、旅游度假、宠物开销 |
-| 🏥 医疗健康 | 看病买药、体检保健、口腔护理、眼镜配镜 |
-| 📚 教育学习 | 书籍资料、培训课程、考试报名、文具用品 |
-| 🎁 人情社交 | 请客送礼、红包礼金、聚会聚餐 |
-| 📱 通讯网络 | 手机话费、宽带网络、会员订阅 |
-| 💰 金融保险 | 手续费、保险费、贷款利息 |
-| 📦 其他支出 | 快递物流、其他杂项 |
+| 🍜 餐饮饮食 | 🥚早餐、🍚午餐、🍜晚餐、🧋奶茶、🍟零食、🥤饮料、🍎水果、🥡外卖、🍳买菜 |
+| 🚗 交通出行 | 🚇地铁、🚌公交、🚕出租车、🚗网约车、🚄火车高铁、✈️飞机机票、⛽️加油、🔋充电、🅿️停车费 |
+| 🛒 购物消费 | 👔服饰鞋包、📱数码产品、🪑家居用品、💄美妆护肤、🏬日用百货 |
+| 🏠 住房居家 | 🚪房租、🏡房贷、🧹物业费、🚰水费、🔋电费、🧰维修保养 |
+| 🎮 娱乐休闲 | 🎬电影、🎤演出、🏊运动健身、🎮游戏充值、⛱️旅游度假、🐈‍⬛宠物开销 |
+| 🏥 医疗健康 | 🧑‍⚕️看病、💊买药、🩻体检、🦷口腔、👓眼镜 |
+| 📚 教育学习 | 📖书籍资料、👩‍🏫培训课程、📃考试报名、✏️文具用品、🤖AI订阅 |
+| 🎁 人情社交 | 🎁请客送礼、🧧红包礼金、🥳聚会聚餐 |
+| 📱 通讯网络 | 📲手机话费、🛜宽带网络、🆙会员订阅 |
+| 💰 金融保险 | 💲手续费、🧑‍💼保险费、🏦贷款利息 |
+| 📦 其他支出 | 🚚快递物流、➕其他杂项 |
 
 ### 3. 辅助功能（按优先级排序）
 - **P0 必须有**: 消费记录的增删改查、分类选择
@@ -85,7 +90,7 @@ Claude Code 为本项目生成的**记忆文件**和**工作文档**存放在项
 - [x] 二级分类选择（11 大类 + 50+ 小类）
 - [x] 按月份筛选查看
 - [x] 数据持久化（SQLite 本地数据库）
-- [x] 支付方式（微信/支付宝/银行卡/美团月付）
+- [x] 支付方式（支付宝/微信/银行卡/现金，可在设置页增删改）
 - [x] 支付方式按日统计展示
 
 ### ✅ P1 统计功能（已完成）
@@ -94,7 +99,7 @@ Claude Code 为本项目生成的**记忆文件**和**工作文档**存放在项
 - [x] 每日小计展示
 
 ### ✅ P2 功能（已完成）
-- [x] 消费趋势图表（月度折线图 + 分类饼图）
+- [x] 消费趋势图表（近 12 月月度折线图 + 当月按天双线图）
 - [x] 预算设置与提醒（设置月度预算 + 进度条 + 超支/接近提醒）
 - [x] 数据导出（CSV 格式）
 
@@ -125,27 +130,35 @@ OneLedger/
 ├── frontend/                      # 前端代码（React + TypeScript）
 │   ├── data/
 │   │   ├── types.ts              # TypeScript 类型定义
-│   │   ├── categories.ts         # 默认消费分类数据 + 支付方式
+│   │   ├── categories.ts         # 默认分类 / 支付方式 / 收支类型种子数据
 │   │   ├── dateUtils.ts          # 本地日期工具（避免 UTC 时区问题）
-│   │   ├── database.ts           # SQLite 数据库操作（含分类表，桌面/网页自适应）
-│   │   └── webDb.ts              # 网页版数据层（sql.js + IndexedDB 持久化）
+│   │   ├── calcUtils.ts          # 金额表达式解析（+ - * / 与括号，递归下降，无 eval）
+│   │   ├── database.ts           # SQLite 数据库操作（schema 唯一维护处，桌面/网页自适应）
+│   │   ├── webDb.ts              # 网页版数据层（sql.js + IndexedDB 持久化）
+│   │   └── emojis.ts             # emoji 候选列表
 │   ├── contexts/
-│   │   └── CategoryContext.tsx    # 分类数据共享 Context
+│   │   ├── CategoryContext.tsx   # 分类数据共享 Context
+│   │   ├── SettingsContext.tsx   # 支付方式 / 收支类型配置 Context
+│   │   └── HomeFilterContext.tsx # 首页筛选状态（切页保留）
 │   ├── components/
 │   │   ├── Layout.tsx            # 应用布局 + 顶部导航
-│   │   ├── ExpenseForm.tsx       # 添加/编辑表单弹窗
-│   │   ├── ExpenseList.tsx       # 消费记录列表（按日分组）
-│   │   ├── CategoryPicker.tsx    # 二级分类选择器
-│   │   ├── BudgetSetup.tsx       # 预算设置弹窗
-│   │   ├── TrendChart.tsx        # 趋势图表（折线图：月度趋势 + 按天趋势）
-│   │   ├── StatsPanel.tsx        # 首页右栏统计面板（当月支出图 + 分类排行）
+│   │   ├── ExpenseList.tsx       # 消费记录列表（按日分组 + 行内编辑 + 快捷添加）
+│   │   ├── StatsPanel.tsx        # 右栏统计面板（当月支出图 + 分类排行）
+│   │   ├── TrendChart.tsx        # 折线图（月度趋势 / 按天双线，Y 轴分段压缩）
+│   │   ├── DatePicker.tsx        # 日期选择
+│   │   ├── DateRangePicker.tsx   # 日期区间选择
+│   │   ├── InlineSelect.tsx      # 行内下拉选择（portal，WebView 兼容）
+│   │   ├── EmojiPicker.tsx       # emoji 选择器
 │   │   └── ConfirmDialog.tsx     # 确认弹窗组件
 │   └── pages/
 │       ├── HomePage.tsx          # 首页：两栏仪表盘（趋势图 + 记录列表 + 统计面板）
-│       └── CategoryManager.tsx   # 分类管理页（增删改 + 默认模板）
+│       ├── CategoryManager.tsx   # 分类管理页（增删改 + 默认模板 + 拖拽排序）
+│       └── SettingsPage.tsx      # 设置页（支付方式 / 收支类型管理）
 ├── backend/                       # Rust 原生后端（Tauri）
 │   ├── src/
+│   ├── capabilities/             # 权限配置
 │   └── tauri.conf.json           # Tauri 窗口/打包配置
+├── public/                        # 网页版 favicon 等静态资源
 ├── index.html                    # 入口 HTML
 ├── logo.png                      # 应用图标源图（1024×1024，更换 Logo 见下方说明）
 ├── README.md                     # 产品文档
@@ -155,7 +168,7 @@ OneLedger/
 
 **构建产物**:
 - Mac .app: `backend/target/release/bundle/macos/OneLedger.app`（直接打开）
-- Mac 安装包: `backend/target/release/bundle/dmg/OneLedger_xxx.dmg`
+- Mac 安装包: `backend/target/release/bundle/dmg/OneLedger_<版本>_universal.dmg`
 - Windows .exe: 在 Windows 电脑上运行 `npm run tauri:build` 生成
 
 ---
@@ -202,6 +215,17 @@ OneLedger/
 > 2026-08-02 首页改版：两栏仪表盘布局（顶部全宽近 12 月趋势图 + 左右两栏），新增时间范围选择器
 > （近一周 / 近一月 / 本月 / 历史月份），蓝色卡、记账列表、右栏「当月支出」图与分类排行联动；
 > 删除独立统计页 /stats 与饼图组件。
+>
+> 2026-08-16 全面代码审查修复（第二次）：修复 `ExpenseList` 日期解析的 UTC 时区隐患（统一带
+> `T00:00:00` 本地解析）、预算输入框 ±1000 误触发保存、每日小计/当日支付方式统计口径统一为
+> 只算「计入支出」的记录、`listExpenses` 移除 10000 条默认上限、自定义小类保存竞态（去掉
+> setTimeout）、分类管理默认金额负数校验；提交 `backend/Cargo.lock`（保证构建可复现）、删除遗留
+> `public/icons.svg`、`index.html` 语言改 zh-CN、补全 `Cargo.toml` 元数据；同步更新 README.md 与
+> 本文档中过期的目录结构 / 组件清单 / 路由表 / 分类表 / 数据库表结构。
+>
+> 2026-08-16（补充）：默认小类预设 —— 「餐饮饮食」的 🥚早餐/🍚午餐/🍜晚餐标记为默认小类
+> （记账自动带出、参与「添加某天」）。新装库播种即生效；老库由 `database.ts` 迁移 v1 用
+> SQLite `user_version` 一次性回填（置 1 后不再执行，用户手动取消的默认不会被改回）。
 
 ---
 
@@ -257,9 +281,9 @@ OneLedger/
 
 | 路径 | 页面 | 说明 |
 |------|------|------|
-| `/` | `HomePage` | 记录列表 + 预算概览 + CSV导出 |
-| `/stats` | `StatsPage` | 趋势折线图 + 分类饼图 + 分类排行 |
-| `/categories` | `CategoryManager` | 分类增删改 + 默认模板 + 拖拽排序 |
+| `/` | `HomePage` | 首页：两栏仪表盘（趋势图 + 记录列表 + 统计面板 + 预算 + CSV 导出） |
+| `/categories` | `CategoryManager` | 分类管理（增删改 + 默认模板 + 默认大类开关 + 拖拽排序） |
+| `/settings` | `SettingsPage` | 设置（支付方式 / 收支类型管理） |
 
 所有页面共享 `Layout` 组件（顶部导航栏），通过 `BrowserRouter` 包裹。
 
@@ -281,15 +305,18 @@ CategoryContext.tsx         ←── 拉取分类树，全局共享避免重复
 
 | 表名 | 关键字段 | 说明 |
 |------|---------|------|
-| `expenses` | `id, amount, category_l1, category_l2, date, note, payment_method, created_at` | 消费记录 |
+| `expenses` | `id, amount, category_l1, category_l2, date, note, payment_method, type, is_non_daily, created_at` | 消费记录（type 存收支类型 code；is_non_daily 0=日常 1=非日常） |
 | `categories` | `id, name (UNIQUE), icon, sort_order, is_default` | 一级分类大类（is_default 控制是否参与「添加某天」自动记账） |
-| `subcategories` | `id, category_id (FK), name, is_default, sort_order, default_note, default_payment_method, default_amount` | 二级分类小类 |
+| `subcategories` | `id, category_id (FK), name, is_default, sort_order, default_note, default_payment_method, default_amount, default_type, default_is_non_daily` | 二级分类小类（default_* 为记账时的默认模板） |
 | `budgets` | `id, month (UNIQUE), amount` | 月度预算 |
+| `payment_methods` | `id, name (UNIQUE), icon, sort_order` | 支付方式配置（记录里存 name，改名时同步迁移历史记录） |
+| `tx_types` | `id, code (UNIQUE), name, icon, category, sort_order` | 收支类型配置（记录里存 code，改名无需迁移；category ∈ expense/income/ignore） |
 
 ### 关键模式
 
-- **本地日期处理**：所有日期操作通过 `dateUtils.ts` 进行，使用 `getFullYear / getMonth / getDate` 避免 `toISOString()` 的 UTC 时区偏移（凌晨 0-8 点时区 Bug，v2.0.0 修复）。
-- **表单弹窗**：`ExpenseForm` 组件在记账/编辑时接收金额实时校验（正则），Esc 键关闭弹窗。编辑旧记录时不自动填充默认模板值。
+- **本地日期处理**：所有日期操作通过 `dateUtils.ts` 进行，使用 `getFullYear / getMonth / getDate` 避免 `toISOString()` 的 UTC 时区偏移（凌晨 0-8 点时区 Bug，v2.0.0 修复）。注意：解析 `YYYY-MM-DD` 字符串必须带 `T00:00:00` 后缀按本地时间解析（`new Date('2026-07-01')` 会按 UTC 解析，西半球时区会错一天）。
+- **行内编辑**：记录列表 / 分类管理 / 设置页均采用行内编辑（点格子进入、回车或点外部自动保存、Esc 关闭），无独立表单弹窗。金额统一用 `calcUtils.evaluateExpression` 校验（支持算式如 `5*2`，负数拦截，0 金额允许保存后标红提醒）。编辑旧记录时不自动填充默认模板值。
+- **统计口径**：所有「支出」统计（蓝色卡 / 分类排行 / 当月支出图 / 每日小计 / 支付方式统计）只统计收支类型为 `expense` 的记录；收入、不计类型不参与。口径统一由 `expenseCodes`（SettingsContext）或 SQL 中 `type IN (SELECT code FROM tx_types WHERE category='expense')` 保证。
 - **CSV 导出**：`expensesToCSV()` 函数使用 BOM + 双引号转义，确保 Excel 正确识别中文字符。
 - **拖拽排序**：`@dnd-kit` 实现分类管理页面的拖拽重排，`reorderCategories` / `reorderSubCategories` 批量写入 `sort_order`。
 - **预算颜色**：Tailwind 主题色 `--color-primary: #6366f1`（正常）、`amber` 接近（≥80%）、`red` 超支。

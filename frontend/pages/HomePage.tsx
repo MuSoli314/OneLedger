@@ -74,6 +74,12 @@ export default function HomePage() {
   const [deleteDateTarget, setDeleteDateTarget] = useState<string | null>(null)
   const [deleteCategoryTarget, setDeleteCategoryTarget] = useState<{ date: string; category_l1: string } | null>(null)
   const lastCommittedRef = useRef(0) // 上次成功保存的预算金额，用于识别原生上下箭头点击（整步 ±1000 跳变即保存）
+  const budgetDraftRef = useRef('') // 预算输入框最新值（同步 state，供 onChange 判断「是否从上次保存值整步跳变」）
+  // 同时更新 state 与 ref，保证 onChange 里总能读到上一次渲染后的值
+  const setDraft = useCallback((v: string) => {
+    budgetDraftRef.current = v
+    setBudgetDraft(v)
+  }, [])
   const [showDateAdder, setShowDateAdder] = useState(false)
   const [addingDate, setAddingDate] = useState('')
   const [addedDates, setAddedDates] = useState<string[]>([])
@@ -341,9 +347,9 @@ export default function HomePage() {
 
   // 预算加载后同步到内联文本框 + 记录已保存金额（用于识别原生上下箭头点击）
   useEffect(() => {
-    setBudgetDraft(budget?.amount ? budget.amount.toFixed(0) : '')
+    setDraft(budget?.amount ? budget.amount.toFixed(0) : '')
     lastCommittedRef.current = budget?.amount ?? 0
-  }, [budget])
+  }, [budget, setDraft])
 
   // 内联文本框保存预算（回车、失焦、或点上下箭头时触发）
   const commitBudget = async (raw?: string) => {
@@ -351,7 +357,7 @@ export default function HomePage() {
     const num = parseFloat(draft)
     if (isNaN(num) || num < 0) {
       // 非法输入，还原为当前预算值
-      setBudgetDraft(budget?.amount ? budget.amount.toFixed(0) : '')
+      setDraft(budget?.amount ? budget.amount.toFixed(0) : '')
       return
     }
     if (num === 0) {
@@ -359,7 +365,7 @@ export default function HomePage() {
       try {
         await deleteBudget(budgetMonth)
         lastCommittedRef.current = 0
-        setBudgetDraft('')
+        setDraft('')
         refreshBudget()
       } catch (err) {
         alert('预算保存失败：' + String(err))
@@ -445,7 +451,10 @@ export default function HomePage() {
                 {RANGE_PILLS.map((p) => (
                   <button
                     key={p.key}
-                    onClick={() => setRangeMode(p.key)}
+                    onClick={() => {
+                      setRangeMode(p.key)
+                      setShowCustomPicker(false) // 切换其他时间范围时收起自定义面板
+                    }}
                     className={`text-xs rounded-lg px-2.5 py-1 transition-colors ${
                       rangeMode === p.key
                         ? 'bg-white/30 font-semibold'
@@ -461,6 +470,7 @@ export default function HomePage() {
                     if (!e.target.value) return
                     setHistoryMonth(e.target.value)
                     setRangeMode('history')
+                    setShowCustomPicker(false) // 切换历史月份时收起自定义面板
                   }}
                   className={`text-xs rounded-lg px-2 py-1 border border-white/20 focus:outline-none ${
                     rangeMode === 'history'
@@ -537,12 +547,21 @@ export default function HomePage() {
                       value={budgetDraft}
                       onChange={(e) => {
                         const v = e.target.value
-                        setBudgetDraft(v)
-                        // 点原生上下箭头：值按 step 整步跳变（±1000），立即保存；
-                        // 打字逐字符变化不会整步跳变，仍由回车/失焦保存。
                         const num = parseFloat(v)
                         const last = lastCommittedRef.current
-                        if (!isNaN(num) && (num === last + 1000 || num === last - 1000)) {
+                        // 点原生上下箭头：值从「上次保存值」整步跳变（±1000），立即保存；
+                        // 打字逐字符变化不会整步跳变（如从 0 敲出 "1000"，中间值是 1/10/100，
+                        // 与上次保存值不同），仍由回车/失焦保存。
+                        const prevDraft = budgetDraftRef.current
+                        const fromLast = prevDraft === ''
+                          ? last === 0
+                          : parseFloat(prevDraft) === last
+                        setDraft(v)
+                        if (
+                          !isNaN(num) &&
+                          (num === last + 1000 || num === last - 1000) &&
+                          fromLast
+                        ) {
                           commitBudget(v)
                         }
                       }}
@@ -555,7 +574,7 @@ export default function HomePage() {
                           const cur = parseFloat(budgetDraft)
                           const base = isNaN(cur) || cur < 0 ? 0 : cur
                           const next = e.key === 'ArrowUp' ? base + 1000 : Math.max(0, base - 1000)
-                          setBudgetDraft(String(next))
+                          setDraft(String(next))
                           commitBudget(String(next))
                         }
                       }}

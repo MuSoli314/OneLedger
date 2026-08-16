@@ -106,12 +106,26 @@ async function connectDb(retries = 2): Promise<DbConnection> {
             // 新装默认支付方式 = 第一个默认支付方式（与界面新增小类兜底行为一致）
             const defaultPay = DEFAULT_PAYMENT_METHODS[0]?.name ?? ''
             const isNonDailyDefault = NON_DAILY_DEFAULT_NAMES.has(cat.children[j].name) ? 1 : 0
+            // 小类默认标记来自 categories.ts 的 isDefault（如餐饮饮食的早餐/午餐/晚餐）
+            const isDefaultSeed = cat.children[j].isDefault ? 1 : 0
             await conn.execute(
-              'INSERT INTO subcategories (category_id, name, is_default, default_payment_method, default_is_non_daily, sort_order) VALUES ($1, $2, 0, $3, $4, $5)',
-              [catId, cat.children[j].name, defaultPay, isNonDailyDefault, j]
+              'INSERT INTO subcategories (category_id, name, is_default, default_payment_method, default_is_non_daily, sort_order) VALUES ($1, $2, $3, $4, $5, $6)',
+              [catId, cat.children[j].name, isDefaultSeed, defaultPay, isNonDailyDefault, j]
             )
           }
         }
+      }
+
+      // 迁移 v1（2026-08-16）：默认小类预设 —— 「餐饮饮食」的早餐/午餐/晚餐标记为默认。
+      // 新装播种已生效；老库用 SQLite user_version 做一次性回填（置 1 后不再执行，
+      // 用户之后在分类管理页手动取消的默认不会被改回）。
+      const uvRows = await conn.select<{ user_version: number }[]>('PRAGMA user_version')
+      const userVersion = uvRows[0]?.user_version ?? 0
+      if (userVersion < 1) {
+        await conn.execute(
+          "UPDATE subcategories SET is_default=1 WHERE category_id IN (SELECT id FROM categories WHERE name='餐饮饮食') AND name IN ('🥚早餐','🍚午餐','🍜晚餐')"
+        )
+        await conn.execute('PRAGMA user_version = 1')
       }
 
       // 确保预算表存在
@@ -203,7 +217,7 @@ export async function deleteExpensesByCategory(date: string, category_l1: string
 }
 
 // 查询消费记录列表
-// 注意：不传 limit 时默认取 10000 条（避免记录多时被悄悄截断）
+// 注意：不传 limit 时不设上限（记录再多也不会被悄悄截断）
 export async function listExpenses(params?: {
   month?: string // 格式: YYYY-MM
   startDate?: string // 格式: YYYY-MM-DD（含当天）
@@ -245,11 +259,16 @@ export async function listExpenses(params?: {
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-  const limit = params?.limit ?? 10000
-  const offset = params?.offset ?? 0
 
-  const sql = `SELECT * FROM expenses ${where} ORDER BY date DESC, id ASC LIMIT $${idx} OFFSET $${idx + 1}`
-  const rows = await database.select<(Omit<Expense, 'isNonDaily'> & { is_non_daily: number })[]>(sql, [...values, limit, offset])
+  let sql: string
+  if (params?.limit !== undefined) {
+    // 显式传 limit 才分页
+    sql = `SELECT * FROM expenses ${where} ORDER BY date DESC, id ASC LIMIT $${idx} OFFSET $${idx + 1}`
+    values.push(params.limit, params.offset ?? 0)
+  } else {
+    sql = `SELECT * FROM expenses ${where} ORDER BY date DESC, id ASC`
+  }
+  const rows = await database.select<(Omit<Expense, 'isNonDaily'> & { is_non_daily: number })[]>(sql, values)
   return rows.map((r) => ({ ...r, isNonDaily: r.is_non_daily === 1 }))
 }
 

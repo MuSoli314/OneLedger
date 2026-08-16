@@ -1,9 +1,9 @@
 [package]
 name = "app"
 version = "2.0.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
+description = "一笔（OneLedger）桌面记账应用 —— 个人消费记录与支出管理"
+authors = ["musoli314 <musoli314@gmail.com>"]
+license = "MIT"
 repository = ""
 edition = "2021"
 rust-version = "1.77.2"

@@ -586,6 +586,12 @@ export default function CategoryManager() {
 
   // 保存小类编辑（名称 + 默认值）
   const doSaveSub = useCallback(async (id: number, form: typeof subEditForm) => {
+    // 默认金额：支持算式（如 5*2）；空/非法视为 0；负数不允许（与记账行内校验口径一致）
+    const defaultAmount = evaluateExpression(form.defaultAmount) || 0
+    if (defaultAmount < 0) {
+      alert('默认金额不能为负数')
+      return
+    }
     if (id === -1 && pendingAddCatId !== null) {
       // 新增小类：支付方式/收支类型必填（表单已默认第一项，这里再兜底取第一项）
       if (form.subName.trim()) {
@@ -593,7 +599,7 @@ export default function CategoryManager() {
         await updateSubCategoryDefaults(newId, {
           defaultNote: form.defaultNote,
           defaultPaymentMethod: form.defaultPaymentMethod || paymentMethods[0]?.name || '',
-          defaultAmount: evaluateExpression(form.defaultAmount) || 0,
+          defaultAmount,
           defaultType: form.defaultType || txTypes[0]?.code || 'expense',
           defaultIsNonDaily: form.defaultIsNonDaily,
         })
@@ -608,7 +614,7 @@ export default function CategoryManager() {
       await updateSubCategoryDefaults(id, {
         defaultNote: form.defaultNote,
         defaultPaymentMethod: form.defaultPaymentMethod,
-        defaultAmount: evaluateExpression(form.defaultAmount) || 0,
+        defaultAmount,
         defaultType: form.defaultType,
         defaultIsNonDaily: form.defaultIsNonDaily,
       })
