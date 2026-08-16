@@ -1,18 +1,23 @@
 import { useState, useRef, useEffect } from 'react'
 import InlineSelect from './InlineSelect'
+import EditExpenseDialog from './EditExpenseDialog'
 import { useSettings } from '../contexts/SettingsContext'
 import { addExpense } from '../data/database'
 import { evaluateExpression } from '../data/calcUtils'
 import { useCategories } from '../contexts/CategoryContext'
-import type { Expense, TransactionType } from '../data/types'
+import type { Expense, ExpenseInput, TransactionType } from '../data/types'
 import { format } from 'date-fns'
 
 interface Props {
   expenses: Expense[]
   onDelete: (expense: Expense) => void
   onUpdate: (id: number, category_l2: string, note: string, amount: number, payment_method: string, type: TransactionType, isNonDaily: boolean) => Promise<void>
+  /** 完整编辑（编辑弹窗）：全部字段含日期，input 直接为入库格式 */
+  onUpdateFull: (id: number, input: ExpenseInput) => Promise<void>
   onRefresh?: () => void
   extraDates?: string[]
+  /** 需要主动展开的日期（快捷添加日期 / 点击日历某天后，自动展开该天记录） */
+  autoExpandDates?: string[]
   /** 整月视图下缺失记录的日期（本月/上月/历史月份）— 列表里为这些日期补「+ 添加」快捷行 */
   missingDates?: string[]
   /** 点击「+ 添加」快捷行时回调（新增该缺失日期，行为与「添加日期」弹窗一致） */
@@ -21,6 +26,8 @@ interface Props {
   onDeleteCategory?: (date: string, category_l1: string) => void
   // 是否正在筛选（支付方式/分类），仅影响空状态文案
   hasFilter?: boolean
+  /** 搜索中：强制展开所有日期分组与大类分组，让命中的记录（含备注）直接可见 */
+  searchActive?: boolean
 }
 
 interface LocalRow {
@@ -56,7 +63,7 @@ function getWeekday(dateStr: string): string {
   }
 }
 
-export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, extraDates, missingDates, onAddDate, onDeleteDate, onDeleteCategory, hasFilter }: Props) {
+export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull, onRefresh, extraDates, autoExpandDates, missingDates, onAddDate, onDeleteDate, onDeleteCategory, hasFilter, searchActive }: Props) {
   const { categories, addSubCategory, addCategory } = useCategories()
   const { paymentMethods, txTypes, defaultExpenseCode } = useSettings()
   const [collapsedMap, setCollapsedMap] = useState<Set<string>>(new Set())
@@ -75,6 +82,24 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
       })
     }
   }, [extraDates])
+
+  // 主动展开指定日期（快捷添加日期 / 点击日历某天）— 只展开「新出现」的日期，
+  // 用户手动折叠过的旧日期不会被后续新增日期连带重新展开
+  const lastAutoExpandRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const next = new Set(autoExpandDates || [])
+    const added: string[] = []
+    for (const d of next) {
+      if (!lastAutoExpandRef.current.has(d)) added.push(d)
+    }
+    lastAutoExpandRef.current = next
+    if (added.length === 0) return
+    setExpandedDates(prev => {
+      const s = new Set(prev)
+      for (const d of added) s.add(d)
+      return s
+    })
+  }, [autoExpandDates])
 
   const toggleDateCollapse = (date: string) => {
     setExpandedDates(prev => {
@@ -124,6 +149,8 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
   const typeRef = useRef<HTMLButtonElement | null>(null)
   const noteRef = useRef<HTMLInputElement | null>(null)
   const [addingDate, setAddingDate] = useState<string | null>(null)
+  // 完整编辑弹窗当前编辑的记录（null = 未打开）
+  const [editDialogExpense, setEditDialogExpense] = useState<Expense | null>(null)
   const [hoverL1, setHoverL1] = useState<string | null>(null)
   const [customizingL1, setCustomizingL1] = useState<string | null>(null)
   const [customizingCategory, setCustomizingCategory] = useState(false)
@@ -305,6 +332,8 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
     const el = refMap[focusField || 'category_l2']?.current
     if (!el) return
     el.focus()
+    // 自由输入框（金额/备注）进入编辑时全选已有内容，方便直接输入替换；下拉按钮无需处理
+    if (el instanceof HTMLInputElement) el.select()
   }, [editingId, focusField])
 
   // 按回车保存
@@ -325,6 +354,20 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
   const handleDeleteClick = (e: React.MouseEvent, expense: Expense) => {
     e.stopPropagation()
     onDelete(expense)
+  }
+
+  // 打开完整编辑弹窗：先退出任何行内编辑，避免弹窗打开后行内编辑的
+  // 「点击外部自动保存」把旧值写回（弹窗会重新加载原始值）
+  const openEditDialog = (expense: Expense) => {
+    setEditingId(null)
+    setFocusField(null)
+    setEditDialogExpense(expense)
+  }
+
+  // 弹窗保存成功：展开目标日期分组，让改过日期的记录在列表里直接可见
+  const handleDialogSave = async (id: number, input: ExpenseInput) => {
+    await onUpdateFull(id, input)
+    setExpandedDates((prev) => new Set(prev).add(input.date))
   }
 
   // 点击大类选择器外部关闭
@@ -571,13 +614,19 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
     }
   }
   const quickDates = new Set<string>()
-  // 折叠段：min 日期 → 该段「+ 更多（N 天）」信息；展开段：min 日期 → 该段「收起」信息
+  // 折叠段：min 日期 → 该段「+ 更多（N 天）」信息；展开段：min/max 日期 → 该段「收起」信息
+  // （展开段在段首（max，最晚日期）和段尾（min，最早日期）各放一个「收起」，
+  //   避免展开后只能滚到最底部才能折叠回去）
   const foldedRuns = new Map<string, { runId: string; count: number }>()
   const expandedRunMins = new Map<string, { runId: string }>()
+  const expandedRunMaxs = new Map<string, { runId: string }>()
   for (const r of runEnds) {
     if (r.expanded) {
       for (const d of r.dates) quickDates.add(d)
-      if (r.dates.length > 3) expandedRunMins.set(r.min, { runId: r.id })
+      if (r.dates.length > 3) {
+        expandedRunMins.set(r.min, { runId: r.id })
+        expandedRunMaxs.set(r.max, { runId: r.id })
+      }
     } else {
       quickDates.add(r.min)
       quickDates.add(r.max)
@@ -613,6 +662,19 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
             {/* 缺失日期：只显示快捷行（「+ 添加」；折叠段还配「+ 更多（N 天）」/「收起」），不显示日期标题 */}
             {isQuickRow && (
               <div className="space-y-1.5">
+                {/* 展开段的最晚日期前：「收起」，点击折叠回「+ 更多（N 天）」（段首也放一个，展开后不用滚到底即可折回） */}
+                {expandedRunMaxs.has(date) && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); toggleRunCollapse(expandedRunMaxs.get(date)!.runId) }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 rounded-xl border border-dashed border-slate-300 text-slate-400 hover:bg-slate-50 transition-colors text-sm"
+                    title="折叠中间日期"
+                  >
+                    <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                    </svg>
+                    <span>收起</span>
+                  </button>
+                )}
                 {/* 折叠段的最早日期前：该段折叠为「+ 更多（N 天）」，点击展开中间所有日期 */}
                 {foldedRuns.has(date) && (
                   <button
@@ -682,12 +744,16 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                       const pm = e.payment_method || ''
                       if (pm && txTypeByCode.get(e.type)?.category === 'expense') pmTotals[pm] = (pmTotals[pm] || 0) + e.amount
                     }
-                    return Object.entries(pmTotals)
-                      .filter(([, total]) => total > 0)
-                      .map(([pm, total]) => {
+                    // 按设置页中的支付方式顺序展示（只显示金额 > 0 的；已从设置删除的历史支付方式排在最后兜底）
+                    const orphanPms = Object.keys(pmTotals).filter((pm) => !paymentMethods.some((p) => p.name === pm))
+                    const ordered = [...paymentMethods.map((p) => p.name), ...orphanPms]
+                    return ordered
+                      .filter((pm) => (pmTotals[pm] || 0) > 0)
+                      .map((pm) => {
                         const pmInfo = paymentMethods.find((p) => p.name === pm)
+                        const total = pmTotals[pm]
                         return (
-                          <span key={pm} className="relative group inline-flex items-center gap-0.5 text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md cursor-pointer">
+                          <span key={pm} className="relative group inline-flex items-center justify-center gap-0.5 w-[76px] text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md cursor-pointer">
                             <span>{pmInfo?.icon || ''}</span>
                             <span className="tabular-nums font-medium">¥{total.toFixed(2)}</span>
                             {/* 悬浮气泡（CSS 自绘，WebView 也支持） */}
@@ -708,12 +774,16 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                       const pm = e.payment_method || ''
                       if (pm && txTypeByCode.get(e.type)?.category === 'expense') pmTotals[pm] = (pmTotals[pm] || 0) + e.amount
                     }
-                    return Object.entries(pmTotals)
-                      .filter(([, total]) => total > 0)
-                      .map(([pm, total]) => {
+                    // 按设置页中的支付方式顺序展示（只显示金额 > 0 的；已从设置删除的历史支付方式排在最后兜底）
+                    const orphanPms = Object.keys(pmTotals).filter((pm) => !paymentMethods.some((p) => p.name === pm))
+                    const ordered = [...paymentMethods.map((p) => p.name), ...orphanPms]
+                    return ordered
+                      .filter((pm) => (pmTotals[pm] || 0) > 0)
+                      .map((pm) => {
                         const pmInfo = paymentMethods.find((p) => p.name === pm)
+                        const total = pmTotals[pm]
                         return (
-                          <span key={pm} className="relative group inline-flex items-center gap-0.5 text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md cursor-pointer">
+                          <span key={pm} className="relative group inline-flex items-center justify-center gap-0.5 w-[76px] text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-md cursor-pointer">
                             <span>{pmInfo?.icon || ''}</span>
                             <span className="tabular-nums font-medium">¥{total.toFixed(2)}</span>
                             {/* 悬浮气泡（CSS 自绘，WebView 也支持） */}
@@ -726,11 +796,13 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                   })()}
                 </div>
 
-                <span className="text-sm text-slate-500">
-                  合计 <span className="font-medium text-slate-700">¥{dayTotal.toFixed(2)}</span>
-                  {!expandedDates.has(date) && items.length > 0 && (
-                    <span className="text-slate-300 ml-1">({items.length}笔)</span>
-                  )}
+                <span className="inline-flex items-center gap-1 flex-shrink-0 text-sm">
+                  {/* 「合计 + 金额」作为一个固定宽度整体，笔数独立固定宽度 */}
+                  <span className="w-[112px] text-right text-slate-500">
+                    <span>合计 </span>
+                    <span className="font-medium text-slate-700 tabular-nums">¥{dayTotal.toFixed(2)}</span>
+                  </span>
+                  <span className="w-[44px] text-right text-slate-400 tabular-nums">{items.length}笔</span>
                 </span>
 
                 {/* 添加大类按钮 */}
@@ -864,8 +936,8 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
             </div>
             )}
 
-            {/* 该日记录 — 按大类分组表格 */}
-            {!isQuickRow && expandedDates.has(date) && (
+            {/* 该日记录 — 按大类分组表格（搜索中强制展开，不改变用户手动折叠状态） */}
+            {!isQuickRow && (searchActive || expandedDates.has(date)) && (
             <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
               {Object.entries(groupedByL1).length === 0 ? (
                 <div className="px-4 py-4 text-center">
@@ -905,7 +977,8 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                 })
                 const isLastL1 = l1Idx === l1Arr.length - 1
                 const collapseKey = `${date}|${l1}`
-                const collapsed = collapsedMap.has(collapseKey)
+                // 搜索中强制展开大类（搜索结果直接可见）；否则按用户手动折叠状态
+                const collapsed = !searchActive && collapsedMap.has(collapseKey)
                 return (
                   <div key={l1}>
                     {/* 大类标题行（可点击折叠） */}
@@ -1174,6 +1247,23 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
                             </div>
                           )}
 
+                          {/* 编辑按钮（完整信息弹窗，可改日期；本地未入库的临时行不显示） */}
+                          {!isLocal && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); openEditDialog(expense) }}
+                              className={`w-7 h-7 flex items-center justify-center rounded-lg transition-colors flex-shrink-0 ${
+                                isEditing
+                                  ? 'text-slate-400 hover:bg-primary/10 hover:text-primary'
+                                  : 'opacity-0 group-hover:opacity-100 text-slate-400 hover:bg-primary/10 hover:text-primary'
+                              }`}
+                              title="编辑"
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </button>
+                          )}
+
                           {/* 删除按钮 */}
                           <button
                             onClick={(e) => handleDeleteClick(e, expense)}
@@ -1214,6 +1304,15 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onRefresh, e
           </div>
         )
       })}
+
+      {/* 完整编辑弹窗 */}
+      {editDialogExpense && (
+        <EditExpenseDialog
+          expense={editDialogExpense}
+          onSave={handleDialogSave}
+          onClose={() => setEditDialogExpense(null)}
+        />
+      )}
     </div>
   )
 }

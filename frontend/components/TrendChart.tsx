@@ -105,8 +105,9 @@ function unitToMoney(u: number, top: number): number {
   return 500 + ((u - Z3) / (Z4 - Z3)) * (top - 500)
 }
 
-/** 按天支出双线图（全天虚线 + 日常实线，日期维度 X 轴显示 MM/DD；Y 轴分段压缩） */
-export function DailyDualLineChart({ data, height = 200 }: { data: { date: string; allTotal: number; dailyTotal: number }[]; height?: number }) {
+/** 按天支出双线图（全天虚线 + 日常实线，日期维度 X 轴显示 MM/DD；Y 轴分段压缩）。
+ *  height 传数字为固定高度，传 "100%" 时由父容器（需有确定高度，如 flex-1）撑满。 */
+export function DailyDualLineChart({ data, height = 200 }: { data: { date: string; allTotal: number; dailyTotal: number }[]; height?: number | `${number}%` }) {
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center h-48 text-slate-400 text-sm">

@@ -4,7 +4,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import DatePicker from '../components/DatePicker'
 import DateRangePicker from '../components/DateRangePicker'
 import StatsPanel from '../components/StatsPanel'
-import { TrendLineChart } from '../components/TrendChart'
+import MonthOverview from '../components/MonthOverview'
 import {
   listExpenses,
   deleteExpense,
@@ -18,27 +18,13 @@ import {
   getAllExpenses,
   expensesToCSV,
   addExpense,
-  getTrendData,
   catKey,
 } from '../data/database'
 import { localDateString, localMonthString, formatMonth, getRangeDates, eachDay } from '../data/dateUtils'
 import { useSettings } from '../contexts/SettingsContext'
 import { useCategories } from '../contexts/CategoryContext'
 import { useHomeFilter } from '../contexts/HomeFilterContext'
-import type { Expense, Budget, TransactionType, RangeMode, TrendPoint } from '../data/types'
-
-// 把趋势数据补齐为连续 N 个月（缺记录的月份补 0），保证折线不断档
-function fillTrendGaps(data: TrendPoint[], months: number): TrendPoint[] {
-  const map = new Map(data.map((d) => [d.month, d.total]))
-  const result: TrendPoint[] = []
-  const now = new Date()
-  for (let i = months - 1; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-    result.push({ month: key, total: map.get(key) ?? 0 })
-  }
-  return result
-}
+import type { Expense, ExpenseInput, Budget, TransactionType, RangeMode } from '../data/types'
 
 // 时间范围选择器里的固定按钮（历史月份和自定义是单独控件）
 const RANGE_PILLS: { key: RangeMode; label: string }[] = [
@@ -57,16 +43,14 @@ export default function HomePage() {
     customRange, setCustomRange,
     paymentFilter, setPaymentFilter,
     selectedCats, setSelectedCats,
-    trendCategory, setTrendCategory,
     clearFilters,
   } = useHomeFilter()
   const [expenses, setExpenses] = useState<Expense[]>([])
-  // 数据版本号：每次 loadData() 完成后自增。右栏统计面板 / 顶部趋势图用它做刷新信号，
+  // 数据版本号：每次 loadData() 完成后自增。日历区 / 右栏统计面板用它做刷新信号，
   // 否则编辑/删除/新增后只有蓝色卡片（直接由 expenses 推导）会变，图表不重新查库。
   const [dataVersion, setDataVersion] = useState(0)
   const [showCustomPicker, setShowCustomPicker] = useState(false)
   const [months, setMonths] = useState<string[]>([])
-  const [trendData, setTrendData] = useState<TrendPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [budget, setBudgetData] = useState<Budget | null>(null)
   const [budgetDraft, setBudgetDraft] = useState('') // 预算内联文本框内容
@@ -75,6 +59,8 @@ export default function HomePage() {
   const [deleteCategoryTarget, setDeleteCategoryTarget] = useState<{ date: string; category_l1: string } | null>(null)
   const lastCommittedRef = useRef(0) // 上次成功保存的预算金额，用于识别原生上下箭头点击（整步 ±1000 跳变即保存）
   const budgetDraftRef = useRef('') // 预算输入框最新值（同步 state，供 onChange 判断「是否从上次保存值整步跳变」）
+  const customPickerRef = useRef<HTMLDivElement>(null) // 自定义区间浮窗容器（点击外部自动收起）
+  const customPickerButtonRef = useRef<HTMLButtonElement>(null) // 「自定义」按钮（点击自身只做开/关切换，不触发外部收起）
   // 同时更新 state 与 ref，保证 onChange 里总能读到上一次渲染后的值
   const setDraft = useCallback((v: string) => {
     budgetDraftRef.current = v
@@ -83,6 +69,11 @@ export default function HomePage() {
   const [showDateAdder, setShowDateAdder] = useState(false)
   const [addingDate, setAddingDate] = useState('')
   const [addedDates, setAddedDates] = useState<string[]>([])
+  // 需要主动展开的日期（快捷添加日期 / 点击日历某天后，列表里该天的记录自动展开）
+  const [autoExpandDates, setAutoExpandDates] = useState<string[]>([])
+  // 列表搜索关键字（匹配金额 / 备注，子串匹配不区分大小写）
+  const [searchQuery, setSearchQuery] = useState('')
+  const searchActive = searchQuery.trim() !== ''
 
   const thisMonth = localMonthString()
 
@@ -93,7 +84,7 @@ export default function HomePage() {
   const showBudgetPanel = rangeMode === 'month' || rangeMode === 'lastMonth' || rangeMode === 'history'
   const budgetMonth = rangeMode === 'history' ? historyMonth : rangeMode === 'lastMonth' ? localMonthString(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1)) : thisMonth
 
-  // 卡片左上角标签 + 金额标签
+  // 折线图标题（当前时间范围标签，跟随范围选择器）
   const rangeLabel =
     rangeMode === 'week' ? '近一周'
       : rangeMode === '30d' ? '近一月'
@@ -101,6 +92,40 @@ export default function HomePage() {
       : rangeMode === 'lastMonth' ? '上月'
       : rangeMode === 'custom' ? `${customRange.start.replace(/-/g, '/')} 至 ${customRange.end.replace(/-/g, '/')}`
       : formatMonth(historyMonth)
+
+  // 日历选中的日期 = 「自定义」范围恰为单天时的那一天（点日历某天就是自定义选中该天，
+  // 整页蓝色卡 / 列表 / 排行都联动；再点同一天回到本月）
+  const selectedDay = rangeMode === 'custom' && customRange.start === customRange.end ? customRange.start : null
+  const handleSelectDay = (day: string | null) => {
+    setShowCustomPicker(false)
+    if (day === null || day === selectedDay) {
+      // 取消：回到本月视图
+      setRangeMode('month')
+      return
+    }
+    setCustomRange({ start: day, end: day })
+    setRangeMode('custom')
+    // 点击日历某天 → 主动展开当天记录，让用户直接看到该天的记账数据
+    setAutoExpandDates((prev) => (prev.includes(day) ? prev : [...prev, day]))
+  }
+
+  // 时间范围对应的整月（本月 / 历史月份 / 上月），用于让日历跟随蓝色模块；非整月范围不强制
+  const syncMonth =
+    rangeMode === 'month' ? thisMonth
+      : rangeMode === 'history' ? historyMonth
+      : rangeMode === 'lastMonth' ? localMonthString(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1))
+      : null
+
+  // 日历选月份 → 联动时间范围选择器（效果等同在蓝色模块里选「历史月份」该月；本月则选「本月」）
+  const handleCalendarMonthChange = (month: string) => {
+    setShowCustomPicker(false)
+    if (month === thisMonth) {
+      setRangeMode('month')
+    } else {
+      setHistoryMonth(month)
+      setRangeMode('history')
+    }
+  }
 
   // 加载列表（按时间范围筛选）+ 历史月份下拉数据
   const loadData = useCallback(async () => {
@@ -111,7 +136,7 @@ export default function HomePage() {
       ])
       setExpenses(data)
       setMonths(m)
-      // 数据已刷新：自增版本号，通知统计面板 / 趋势图重新查库
+      // 数据已刷新：自增版本号，通知日历区 / 右栏统计面板重新查库
       setDataVersion((v) => v + 1)
     } catch (err) {
       console.error('加载数据失败:', err)
@@ -119,12 +144,6 @@ export default function HomePage() {
       setLoading(false)
     }
   }, [range])
-
-  // 顶部趋势图固定近 12 个月，不随时间范围切换；可按大类筛选（随 trendCategory 变化）。
-  // dataVersion 变化时重新查库，保证编辑/删除后图表同步刷新
-  useEffect(() => {
-    getTrendData(12, trendCategory || undefined).then(setTrendData).catch(console.error)
-  }, [trendCategory, dataVersion])
 
   // 预算（近一周/近一月不显示预算，置空）
   const refreshBudget = useCallback(() => {
@@ -143,9 +162,6 @@ export default function HomePage() {
     loadData()
   }, [loadData])
 
-  // 顶部趋势图补零
-  const filledTrend = useMemo(() => fillTrendGaps(trendData, 12), [trendData])
-
   // 已有记录的日期集合（用于"添加日期"查重）— 只覆盖当前时间范围
   const existingDates = useMemo(() => new Set(expenses.map((e) => e.date)), [expenses])
 
@@ -153,7 +169,8 @@ export default function HomePage() {
   // 缺的日期会一并落入某段缺失区间：[prev+1, next-1]，其中的两端（挨着已有日期）补快捷。
   // 展示条件与原有「添加下一天」一致：按了支付方式 / 分类筛选时不补快捷（列表聚焦筛选结果）。
   const monthRange = (rangeMode === 'month' || rangeMode === 'lastMonth' || rangeMode === 'history') ? range : null
-  const hasAnyFilter = !!paymentFilter || selectedCats.size > 0
+  // 有筛选（支付方式 / 分类 / 搜索）时不补缺失日期快捷行（列表聚焦筛选结果）
+  const hasAnyFilter = !!paymentFilter || selectedCats.size > 0 || searchActive
   const missingDates = useMemo(() => {
     if (!monthRange || hasAnyFilter) return []
     const existing = new Set(expenses.map((e) => e.date))
@@ -164,6 +181,31 @@ export default function HomePage() {
   // 快捷按钮要添加的日期 = 列表里所有日期（真实记录 + 手动添加的空白日期）的最大值 + 1 天。
   // 只在「本月」显示，且最大日期还没到这个月最后一天时才展示（可提前添加未来日期做计划；
   // 本月的查询范围已覆盖整个自然月，添加的未来日期会立刻显示在列表里）。
+
+  // 自定义区间浮窗：点击非日历区域自动收起（Esc 同样关闭）
+  useEffect(() => {
+    if (!showCustomPicker) return
+    const handleMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node
+      // 点击浮窗内部或「自定义」按钮本身都不算外部，不收起（按钮自身负责开/关切换）
+      if (
+        customPickerRef.current?.contains(target) ||
+        customPickerButtonRef.current?.contains(target)
+      ) {
+        return
+      }
+      setShowCustomPicker(false)
+    }
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowCustomPicker(false)
+    }
+    document.addEventListener('mousedown', handleMouseDown)
+    document.addEventListener('keydown', handleEsc)
+    return () => {
+      document.removeEventListener('mousedown', handleMouseDown)
+      document.removeEventListener('keydown', handleEsc)
+    }
+  }, [showCustomPicker])
 
   // 添加日期弹窗：按 Esc 关闭
   useEffect(() => {
@@ -240,6 +282,12 @@ export default function HomePage() {
     loadData()
   }
 
+  // 完整编辑（编辑弹窗）：全部字段含日期，日期录错可直接改对，无需删了重记
+  const handleUpdateFull = async (id: number, input: ExpenseInput) => {
+    await updateExpense(id, input)
+    loadData()
+  }
+
   // 保存某一天：只处理勾选了「默认」的大类，其下默认小类自动存成记录；
   // 没有默认小类的大类只加空白日期。右下角弹窗的「添加」和顶部快捷按钮共用此函数。
   const saveNewDate = async (date: string) => {
@@ -272,6 +320,9 @@ export default function HomePage() {
       setAddedDates((prev) => (prev.includes(date) ? prev : [...prev, date]))
     }
 
+    // 主动展开刚添加的日期（无论是否保存了记录），让用户直接看到该天的记账数据
+    setAutoExpandDates((prev) => (prev.includes(date) ? prev : [...prev, date]))
+
     // 刷新数据，让新保存的记录显示出来
     await loadData()
   }
@@ -282,6 +333,13 @@ export default function HomePage() {
     .reduce((sum, e) => sum + e.amount, 0)
 
   const recordCount = expenses.length
+  // 日常 / 非日常支出金额（只统计「计入支出」的记录，与卡片「支出」口径一致：日常 + 非日常 = 支出）
+  const dailyTotal = expenses
+    .filter((e) => expenseCodes.has(e.type) && !e.isNonDaily)
+    .reduce((sum, e) => sum + e.amount, 0)
+  const nonDailyTotal = expenses
+    .filter((e) => expenseCodes.has(e.type) && e.isNonDaily)
+    .reduce((sum, e) => sum + e.amount, 0)
 
   // 是否正在按分类筛选
   const hasCategoryFilter = selectedCats.size > 0
@@ -321,8 +379,17 @@ export default function HomePage() {
     let list = expenses
     if (paymentFilter) list = list.filter((e) => (e.payment_method || '未设置') === paymentFilter)
     if (selectedCats.size > 0) list = list.filter((e) => selectedCats.has(catKey(e.category_l1, e.category_l2)))
+    // 搜索：金额（原始数字或两位小数格式）与备注做不区分大小写的子串匹配
+    const q = searchQuery.trim().toLowerCase()
+    if (q) {
+      list = list.filter((e) => {
+        const note = (e.note || '').toLowerCase()
+        if (note.includes(q)) return true
+        return String(e.amount).includes(q) || e.amount.toFixed(2).includes(q)
+      })
+    }
     return list
-  }, [expenses, paymentFilter, selectedCats])
+  }, [expenses, paymentFilter, selectedCats, searchQuery])
 
   // 支付方式统计（只统计支出，与卡片总支出 ¥expenseTotal 口径一致；金额按从高到低排序）
   const paymentTotals = useMemo(() => {
@@ -412,32 +479,22 @@ export default function HomePage() {
 
   return (
     <div>
-      {/* 顶部全宽趋势图（近 12 个月，固定不变，不随范围切换；可下拉筛选某大类） */}
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 mb-6">
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <h3 className="text-sm font-semibold text-slate-700">📈 近12月支出趋势</h3>
-          <select
-            value={trendCategory}
-            onChange={(e) => setTrendCategory(e.target.value)}
-            className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-600 focus:outline-none focus:border-primary"
-          >
-            <option value="">📊 全天</option>
-            {categories.map((c) => (
-              <option key={c.name} value={c.name}>{c.icon} {c.name}</option>
-            ))}
-          </select>
-        </div>
-        <TrendLineChart
-          data={filledTrend}
-          color={trendCategory ? '#f59e0b' : '#6366f1'}
-          height={260}
-        />
-      </div>
+      {/* 📝 记账模块顶部：支出日历（2/5 宽）+ 右侧按天趋势图（3/5 宽，跟随范围选择器联动） */}
+      <MonthOverview
+        dataVersion={dataVersion}
+        startDate={range.start}
+        endDate={range.end}
+        title={rangeLabel}
+        selectedDay={selectedDay}
+        onSelectDay={handleSelectDay}
+        syncMonth={syncMonth}
+        onMonthChange={handleCalendarMonthChange}
+      />
 
-      {/* 左右两栏 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-        {/* ===== 左栏：蓝色概览卡 + 记账列表 ===== */}
-        <div className="space-y-6">
+      {/* 左右两栏：左栏（蓝色概览卡 + 记账列表）占 3/5，右栏（分类排行）占 2/5 */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
+        {/* ===== 左栏（3/5）：蓝色概览卡 + 记账列表 ===== */}
+        <div className="lg:col-span-3 space-y-6">
           {/* 蓝色概览卡 */}
           <div className={`bg-gradient-to-br rounded-2xl p-5 text-white shadow-lg transition-all ${
             overBudget
@@ -447,7 +504,8 @@ export default function HomePage() {
               : 'from-primary to-primary-dark shadow-primary/20'
           }`}>
             {/* 时间范围选择器 + 导出（一行，选中的按钮即标题） */}
-            <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+            <div className="relative">
+              <div className="flex items-center gap-1.5 mb-3 flex-wrap">
                 {RANGE_PILLS.map((p) => (
                   <button
                     key={p.key}
@@ -486,7 +544,8 @@ export default function HomePage() {
                   ))}
                 </select>
                 <button
-                  onClick={() => setShowCustomPicker(true)}
+                  ref={customPickerButtonRef}
+                  onClick={() => setShowCustomPicker((v) => !v)}
                   className={`w-48 whitespace-nowrap text-center text-xs rounded-lg px-2.5 py-1 transition-colors ${
                     rangeMode === 'custom'
                       ? 'bg-white/30 font-semibold'
@@ -504,41 +563,57 @@ export default function HomePage() {
                 >
                   导出
                 </button>
+              </div>
+
+              {/* 自定义区间浮窗：悬浮在蓝色卡片上，点击外部自动收起 */}
+              {showCustomPicker && (
+                <div
+                  ref={customPickerRef}
+                  className="absolute left-0 right-0 top-full z-30 mt-2 bg-white rounded-xl p-4 text-slate-900 w-fit max-w-full overflow-x-auto shadow-xl border border-slate-100"
+                >
+                  <DateRangePicker
+                    start={customRange.start}
+                    end={customRange.end}
+                    onChange={(range) => {
+                      setCustomRange(range)
+                      setRangeMode('custom')
+                      // 自定义范围起止为同一天（单天视图）：与点击日历某天一致，主动展开当天的记录
+                      if (range.start === range.end) {
+                        setAutoExpandDates((prev) => (prev.includes(range.start) ? prev : [...prev, range.start]))
+                      }
+                    }}
+                    onComplete={() => setShowCustomPicker(false)}
+                    onCancel={() => setShowCustomPicker(false)}
+                  />
+                </div>
+              )}
             </div>
 
-            {showCustomPicker && (
-              <div className="bg-white rounded-xl p-4 mb-4 text-slate-900 w-fit max-w-full overflow-x-auto">
-                <DateRangePicker
-                  start={customRange.start}
-                  end={customRange.end}
-                  onChange={(range) => {
-                    setCustomRange(range)
-                    setRangeMode('custom')
-                  }}
-                  onComplete={() => setShowCustomPicker(false)}
-                  onCancel={() => setShowCustomPicker(false)}
-                />
-              </div>
-            )}
-
-            {/* 金额 + 预算（一行四块：支出/笔数/预算/剩余各占 1/4）+ 进度条 */}
+            {/* 金额 + 预算（一行五份：支出（金额后直接接笔数）/日常/非日常/预算/剩余，按内容均布）+ 进度条 */}
             <div>
-              <div className="flex items-center text-sm">
-                {/* 支出：占 1/4 */}
-                <div className="w-1/4 shrink-0 flex items-center gap-1 whitespace-nowrap">
-                  <span className="opacity-80">支出：</span>
+              <div className="flex items-center justify-between text-sm gap-2">
+                {/* 支出：金额后直接接笔数 */}
+                <div className="flex items-center gap-1 whitespace-nowrap">
+                  <span className="opacity-80">支出</span>
                   <span className="font-bold tabular-nums">¥{expenseTotal.toFixed(2)}</span>
+                  <span className="text-xs opacity-70">{recordCount}笔</span>
                 </div>
 
-                {/* 笔数：占 1/4 */}
-                <div className="w-1/4 shrink-0 flex items-center gap-1 whitespace-nowrap">
-                  <span className="opacity-80">笔数：</span>
-                  <span className="font-semibold tabular-nums">{recordCount}</span>
+                {/* 日常（只统计计入支出的日常记录金额） */}
+                <div className="flex items-center gap-1 whitespace-nowrap">
+                  <span className="opacity-80">日常</span>
+                  <span className="font-semibold tabular-nums">¥{dailyTotal.toFixed(2)}</span>
                 </div>
 
-                {/* 预算：占 1/4（近一周/近一月无预算月份，显示 -；其余模式原生上下箭头 ±1000，点箭头即保存） */}
-                <div className="w-1/4 shrink-0 flex items-center gap-1 whitespace-nowrap">
-                  <span className="opacity-80">预算：</span>
+                {/* 非日常（只统计计入支出的非日常记录金额） */}
+                <div className="flex items-center gap-1 whitespace-nowrap">
+                  <span className="opacity-80">非日常</span>
+                  <span className="font-semibold tabular-nums">¥{nonDailyTotal.toFixed(2)}</span>
+                </div>
+
+                {/* 预算（近一周/近一月无预算月份，显示 -；其余模式原生上下箭头 ±1000，点箭头即保存） */}
+                <div className="flex items-center gap-1 whitespace-nowrap">
+                  <span className="opacity-80">预算</span>
                   {showBudgetPanel ? (
                     <input
                       type="number"
@@ -582,13 +657,13 @@ export default function HomePage() {
                       className="w-16 bg-white/20 rounded-md px-1 py-0.5 font-semibold tabular-nums placeholder-white/50 focus:bg-white/30 focus:outline-none"
                     />
                   ) : (
-                    <span className="w-16 text-center font-semibold tabular-nums">-</span>
+                    <span className="font-semibold tabular-nums">-</span>
                   )}
                 </div>
 
-                {/* 剩余：占 1/4（未设置预算显示 -；接近/超出预算时底色变色提示） */}
-                <div className="w-1/4 shrink-0 flex items-center gap-1 whitespace-nowrap">
-                  <span className="opacity-80">剩余：</span>
+                {/* 剩余（未设置预算显示 -；接近/超出预算时底色变色提示） */}
+                <div className="flex items-center gap-1 whitespace-nowrap">
+                  <span className="opacity-80">剩余</span>
                   <span className={`font-semibold tabular-nums rounded-md px-1.5 py-0.5 transition-colors ${
                     overBudget
                       ? 'bg-white text-red-600'
@@ -651,29 +726,55 @@ export default function HomePage() {
             <div className="text-center py-16 text-slate-400 text-sm">加载中...</div>
           ) : (
             <div className="space-y-4">
+              {/* 搜索框：按金额 / 备注筛选列表记录 */}
+              <div className="relative">
+                <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
+                </svg>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="搜索金额或备注"
+                  className="w-full h-10 pl-9 pr-8 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 shadow-sm placeholder:text-slate-400 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-colors"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                    title="清空搜索"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
               <ExpenseList
                 expenses={filteredExpenses}
                 onDelete={handleDelete}
                 onUpdate={handleUpdate}
+                onUpdateFull={handleUpdateFull}
                 onRefresh={loadData}
-                extraDates={addedDates}
+                extraDates={searchActive ? [] : addedDates}
+                autoExpandDates={autoExpandDates}
                 missingDates={missingDates}
                 onAddDate={saveNewDate}
                 onDeleteDate={handleDeleteDate}
                 onDeleteCategory={handleDeleteCategory}
-                hasFilter={!!paymentFilter || hasCategoryFilter}
+                hasFilter={!!paymentFilter || hasCategoryFilter || searchActive}
+                searchActive={searchActive}
               />
             </div>
           )}
         </div>
 
-        {/* ===== 右栏：当月支出图 + 分类排行 ===== */}
-        <div className="space-y-6">
+        {/* ===== 右栏（2/5）：分类排行（当月支出图已移到顶部日历区） ===== */}
+        <div className="lg:col-span-2 space-y-6">
           <StatsPanel
             startDate={range.start}
             endDate={range.end}
             dataVersion={dataVersion}
-            title={rangeLabel}
             selectedCats={selectedCats}
             isCatSelected={isCatSelected}
             onToggleCategory={toggleCategory}

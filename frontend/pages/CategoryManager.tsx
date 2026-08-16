@@ -308,6 +308,8 @@ function SortableSubCategoryRow({
     const el = refMap[focusField || 'subName']?.current
     if (!el) return
     el.focus()
+    // 自由输入框（小类名/默认金额/默认备注）进入编辑时全选已有内容，方便直接输入替换；下拉按钮无需处理
+    if (el instanceof HTMLInputElement) el.select()
     // oxlint 误报 focusField 非响应式，实际是父组件传入的 props
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing, focusField])

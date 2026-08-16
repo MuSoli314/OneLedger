@@ -11,6 +11,18 @@ export default function Layout() {
           </h1>
           <nav className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5">
             <NavLink
+              to="/stats"
+              className={({ isActive }) =>
+                `px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                  isActive
+                    ? 'bg-white text-slate-800 shadow-sm'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`
+              }
+            >
+              统计
+            </NavLink>
+            <NavLink
               to="/"
               end
               className={({ isActive }) =>
