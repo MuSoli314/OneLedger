@@ -754,7 +754,7 @@ export default function HomePage() {
             <div className="space-y-4">
               {/* 记账列表标题 + 搜索框 + 快捷添加开关（开关关闭时隐藏缺失日期的「+ 添加」快捷行） */}
               <div className="flex items-center gap-3 flex-wrap">
-                <span className="inline-flex items-center gap-1 text-sm font-medium text-emerald-700 bg-emerald-100/90 rounded-full px-2.5 py-1">📝 记账列表</span>
+                <span className="inline-flex items-center gap-1 text-sm font-medium text-emerald-700 bg-emerald-100/90 rounded-full px-2.5 h-9">📝 记账列表</span>
                 <div className="relative flex-1 min-w-0">
                 <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
@@ -764,7 +764,7 @@ export default function HomePage() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="搜索金额或备注"
-                  className="w-full h-10 pl-9 pr-8 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 shadow-sm placeholder:text-slate-400 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-colors"
+                  className="w-full h-9 pl-9 pr-8 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 shadow-sm placeholder:text-slate-400 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-colors"
                 />
                 {searchQuery && (
                   <button
@@ -779,19 +779,23 @@ export default function HomePage() {
                 )}
               </div>
                 {/* 快捷添加开关：控制缺失日期「+ 添加」快捷行的显隐（悬浮气泡说明显示条件与功能；
-                    原生 title 在 Tauri WebView 不显示，沿用黄历卡的自定义气泡方案） */}
+                    原生 title 在 Tauri WebView 不显示，沿用黄历卡的自定义气泡方案；
+                    任一筛选（支付方式/日常/分类/搜索）生效时快捷行不显示，按钮整体置灰不可点） */}
                 <div className="relative group shrink-0">
                   <button
                     type="button"
-                    onClick={() => setShowQuickAdd((v) => !v)}
-                    className={`flex items-center gap-1.5 text-xs font-medium rounded-full px-2.5 py-1.5 border transition-colors ${
-                      showQuickAdd
-                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                        : 'bg-slate-50 border-slate-200 text-slate-400'
+                    onClick={() => !hasAnyFilter && setShowQuickAdd((v) => !v)}
+                    disabled={hasAnyFilter}
+                    className={`flex items-center gap-1.5 text-xs font-medium rounded-full h-9 px-2.5 border transition-colors ${
+                      hasAnyFilter
+                        ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                        : showQuickAdd
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                          : 'bg-slate-50 border-slate-200 text-slate-400'
                     }`}
                   >
-                    <span className={`relative inline-flex w-7 h-4 rounded-full transition-colors ${showQuickAdd ? 'bg-emerald-500' : 'bg-slate-300'}`}>
-                      <span className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${showQuickAdd ? 'translate-x-3' : ''}`} />
+                    <span className={`relative inline-flex w-7 h-4 rounded-full transition-colors ${hasAnyFilter ? 'bg-slate-200' : showQuickAdd ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+                      <span className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${showQuickAdd && !hasAnyFilter ? 'translate-x-3' : ''}`} />
                     </span>
                     快捷添加
                   </button>

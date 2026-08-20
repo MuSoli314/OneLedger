@@ -126,20 +126,29 @@ export default function SortableSubCategoryRow({
         {sub.is_default ? '✓' : ''}
       </button>
 
-      {/* 非日常标记（点击切换，立即保存）——固定宽度，两态一致不跳动 */}
-      {!isEditing && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onToggleNonDaily() }}
-          className={`w-[52px] h-5 flex-shrink-0 flex items-center justify-center rounded-md text-[10px] transition-colors ${
-            sub.default_is_non_daily
-              ? 'bg-slate-200 text-slate-500'
-              : 'bg-transparent text-slate-300 border border-dashed border-slate-200 hover:border-slate-300 hover:text-slate-400'
-          }`}
-          title={sub.default_is_non_daily ? '默认非日常（点击改为日常）' : '默认日常（点击改为非日常）'}
-        >
-          {sub.default_is_non_daily ? '非日常' : '日常'}
-        </button>
-      )}
+      {/* 日常/非日常标记（固定在最前，与记账列表一致；点击切换立即保存）——固定宽度，两态一致不跳动 */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation()
+          if (isEditing) {
+            // 编辑态：改表单并自动保存退出编辑（与支付方式/收支类型下拉一致）
+            const f = { ...subEditForm, default_is_non_daily: !subEditForm.default_is_non_daily }
+            onSubEditFormChange(f)
+            onAutoSave(f)
+          } else {
+            // 非编辑态：立即切换保存（不改其它字段）
+            onToggleNonDaily()
+          }
+        }}
+        className={`w-[52px] h-5 flex-shrink-0 flex items-center justify-center rounded-md text-[10px] transition-colors ${
+          (isEditing ? subEditForm.default_is_non_daily : sub.default_is_non_daily)
+            ? 'bg-slate-200 text-slate-500'
+            : 'bg-transparent text-slate-300 border border-dashed border-slate-200 hover:border-slate-300 hover:text-slate-400'
+        }`}
+        title={(isEditing ? subEditForm.default_is_non_daily : sub.default_is_non_daily) ? '默认非日常（点击改为日常）' : '默认日常（点击改为非日常）'}
+      >
+        {(isEditing ? subEditForm.default_is_non_daily : sub.default_is_non_daily) ? '非日常' : '日常'}
+      </button>
 
       {/* 小类名称 */}
       {isEditing ? (
@@ -207,16 +216,6 @@ export default function SortableSubCategoryRow({
                 onAutoSave(newForm)
               }}
             />
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); const f = { ...subEditForm, default_is_non_daily: !subEditForm.default_is_non_daily }; onSubEditFormChange(f); onAutoSave(f) }}
-              className={`flex items-center gap-1 px-2 h-8 rounded-lg text-[11px] flex-shrink-0 transition-colors ${
-                subEditForm.default_is_non_daily ? 'bg-slate-200 text-slate-600' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
-              }`}
-              title="切换默认是否为非日常支出"
-            >
-              {subEditForm.default_is_non_daily ? '非日常' : '日常'}
-            </button>
             <div className="flex-1 min-w-0">
               <input
                 type="text"

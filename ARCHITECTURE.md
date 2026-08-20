@@ -74,6 +74,7 @@ frontend/
 │   ├── CategoryDragHandle.tsx #   拖拽排序手柄（六点 grip）
 │   ├── SortableCategoryRow.tsx #  分类管理可拖拽大类行（标题/改名/图标选择/小类插槽）
 │   ├── SortableSubCategoryRow.tsx # 分类管理可拖拽小类行（默认模板行内编辑，导出 EditField/SubEditForm）
+│   ├── SystemDefaultCategories.tsx # 分类管理「系统默认」只读列（出厂种子清单展示 + 一键恢复按钮）
 │   ├── EditExpenseDialog.tsx  #   记录完整编辑弹窗（含日期）
 │   ├── StatsPanel.tsx         #   右栏分类排行（可勾选筛选）
 │   ├── DatePicker.tsx         #   日期选择

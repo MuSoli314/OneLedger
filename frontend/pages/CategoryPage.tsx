@@ -9,6 +9,8 @@ import { EMOJI_LIST } from '../data/emojis'
 import { IconPickerButton } from '../components/EmojiPicker'
 import InlineSelect from '../components/InlineSelect'
 import ConfirmDialog from '../components/ConfirmDialog'
+import SystemDefaultCategories from '../components/SystemDefaultCategories'
+import { categories as defaultCategories, NON_DAILY_DEFAULT_NAMES, DEFAULT_PAYMENT_METHODS } from '../data/categories'
 import SortableCategoryRow from '../components/SortableCategoryRow'
 import SortableSubCategoryRow, { type EditField, type SubEditForm } from '../components/SortableSubCategoryRow'
 import {
@@ -280,6 +282,64 @@ export default function CategoryPage() {
 
   const handleDragCancel = () => setActiveDragId(null)
 
+  // ===== 从「系统默认」恢复到「我的分类」 =====
+  // 按出厂种子配置恢复一个小类：建小类 + 默认支付方式（第一个默认值，与播种一致）+ 非日常标记 + 种子默认小类标记
+  const restoreSubInto = useCallback(async (catId: number, child: { name: string; is_default?: boolean }) => {
+    const subId = await addSubCategory(catId, child.name)
+    await updateSubCategoryDefaults(subId, {
+      default_payment_method: DEFAULT_PAYMENT_METHODS[0]?.name ?? '',
+      default_is_non_daily: NON_DAILY_DEFAULT_NAMES.has(child.name),
+    })
+    if (child.is_default) await toggleSubCategoryDefault(subId, true)
+  }, [addSubCategory, updateSubCategoryDefaults, toggleSubCategoryDefault])
+
+  const handleRestoreCategory = useCallback(async (l1: string) => {
+    const seed = defaultCategories.find((c) => c.name === l1)
+    if (!seed) return
+    if (categories.some((c) => c.name === l1)) {
+      alert(`「${l1}」已在「我的分类」中，无需恢复；如需补齐缺失的小类，请点右侧小类的「＋ 恢复」`)
+      return
+    }
+    try {
+      const catId = await addCategory(seed.name, seed.icon)
+      for (const child of seed.children) {
+        await restoreSubInto(catId, child)
+      }
+    } catch (err) {
+      alert('恢复失败：' + String(err))
+    }
+  }, [categories, addCategory, restoreSubInto])
+
+  const handleRestoreSubCategory = useCallback(async (l1: string, l2: string) => {
+    const seed = defaultCategories.find((c) => c.name === l1)
+    if (!seed) return
+    const child = seed.children.find((c) => c.name === l2)
+    if (!child) return
+    const cat = categories.find((c) => c.name === l1)
+    try {
+      if (!cat) {
+        // 大类已被删除：先按出厂配置重建大类，再补这个小类
+        const catId = await addCategory(seed.name, seed.icon)
+        await restoreSubInto(catId, child)
+      } else {
+        if (cat.children.some((s) => s.name === l2)) {
+          alert(`「${l2}」已在「我的分类」中`)
+          return
+        }
+        await restoreSubInto(cat.id, child)
+      }
+    } catch (err) {
+      alert('恢复失败：' + String(err))
+    }
+  }, [categories, addCategory, restoreSubInto])
+
+  // 当前「我的分类」已有哪些大类/小类（供系统默认列判断置灰）
+  const existingCategoryNames = new Set(categories.map((c) => c.name))
+  const existingSubNames: Record<string, Set<string>> = {}
+  for (const c of categories) {
+    existingSubNames[c.name] = new Set(c.children.map((s) => s.name))
+  }
+
   // 拖拽中的浮层内容
   const dragOverlayContent = (() => {
     if (!activeDragId) return null
@@ -329,6 +389,15 @@ export default function CategoryPage() {
       <div className="text-xs text-slate-400 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 leading-relaxed">
         大类前勾选 ✓ = 该大类参与「添加某天」自动记账；未勾选的大类不会自动添加。小类前勾选 ✓ = 该小类是默认小类（记账时自动带出）。
       </div>
+
+      {/* 两栏：左列「我的分类」（可编辑）+ 右列「系统默认」（只读，可恢复） */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+        {/* 左列：我的分类（可编辑） */}
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1 text-sm font-medium text-sky-700 bg-sky-100/90 rounded-full px-2.5 py-1">🔧 我的分类</span>
+            <span className="text-xs text-slate-400">可增删改、拖拽排序、设默认与模板</span>
+          </div>
 
       {/* 分类列表 */}
       {categories.length === 0 ? (
@@ -518,6 +587,16 @@ export default function CategoryPage() {
           </button>
         </div>
       </div>
+        </div>{/* 左列「我的分类」结束 */}
+
+        {/* 右列：系统默认（只读 + 恢复） */}
+        <SystemDefaultCategories
+          existingCategoryNames={existingCategoryNames}
+          existingSubNames={existingSubNames}
+          onRestoreCategory={handleRestoreCategory}
+          onRestoreSubCategory={handleRestoreSubCategory}
+        />
+      </div>{/* 两栏结束 */}
 
       {/* 删除确认弹窗 */}
       {deleteTarget && (

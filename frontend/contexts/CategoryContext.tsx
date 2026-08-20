@@ -19,7 +19,7 @@ import type { CategoryWithChildren, TransactionType } from '../data/types'
 interface CategoryContextValue {
   categories: CategoryWithChildren[]
   loading: boolean
-  addCategory: (name: string, icon: string) => Promise<void>
+  addCategory: (name: string, icon: string) => Promise<number>
   deleteCategory: (id: number) => Promise<void>
   updateCategoryName: (id: number, name: string) => Promise<void>
   updateCategoryIcon: (id: number, icon: string) => Promise<void>
@@ -54,9 +54,10 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
     refresh()
   }, [refresh])
 
-  const addCategory = useCallback(async (name: string, icon: string) => {
-    await dbAddCategory(name, icon)
+  const addCategory = useCallback(async (name: string, icon: string): Promise<number> => {
+    const newId = await dbAddCategory(name, icon)
     await refresh()
+    return newId
   }, [refresh])
 
   const deleteCategory = useCallback(async (id: number) => {
