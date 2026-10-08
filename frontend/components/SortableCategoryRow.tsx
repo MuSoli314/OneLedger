@@ -1,9 +1,9 @@
 // 分类管理页「可拖拽的大类行」（标题行 + 编辑名称 + 子分类列表插槽 + 图标选择器弹出）
 import { useEffect, useRef } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 import { EmojiPickerGrid } from './EmojiPicker'
-import CategoryDragHandle from './CategoryDragHandle'
+import DragHandle from './DragHandle'
+import { SORTABLE_TRANSITION, sortableRowStyle } from './sortableConfig'
 
 interface Props {
   id: string
@@ -49,17 +49,11 @@ export default function SortableCategoryRow({
   // 让位动画调快一些（默认 200ms 偏拖沓），落位更利落
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
-    transition: { duration: 150, easing: 'cubic-bezier(0.2, 0, 0, 1)' },
+    transition: SORTABLE_TRANSITION,
   })
 
-  // 拖拽中不改变任何外观（不加阴影、不改透明度、不换元素），只让整行跟着指针移动。
-  // zIndex 是为了让被拖的行盖住相邻行（transform 会新建层叠上下文，DOM 靠后的行会压住它）。
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    position: 'relative',
-    zIndex: isDragging ? 10 : undefined,
-  }
+  // 拖拽中不改变任何外观，只让整行跟着指针上下移动（详见 sortableConfig.ts）
+  const style = sortableRowStyle(transform, transition, isDragging)
 
   const defaultCount = cat.children.filter((c) => c.is_default).length
 
@@ -81,11 +75,13 @@ export default function SortableCategoryRow({
   }, [iconPickerCatId, cat.id, onCloseIconPicker])
 
   return (
-    <div ref={setNodeRef} style={style} className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+    // ⚠️ 不要加 overflow-hidden：它会把拖到卡片外的小类行裁掉（圆角靠自身 radius 即可，
+    // 卡片内没有需要裁剪的实色子元素）。
+    <div ref={setNodeRef} style={style} className="bg-white rounded-xl border border-slate-100 shadow-sm">
       {/* 大类标题行 */}
       <div className="flex items-center gap-1 px-4 py-3 pl-2">
         {/* 拖拽手柄 */}
-        <CategoryDragHandle {...attributes} {...listeners} />
+        <DragHandle {...attributes} {...listeners} />
 
         {/* 默认大类开关：勾选后参与「添加某天」自动记账 */}
         <button

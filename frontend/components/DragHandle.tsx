@@ -1,5 +1,5 @@
-// 拖拽排序手柄图标（六点 grip）
-export default function CategoryDragHandle(props: React.HTMLAttributes<HTMLButtonElement>) {
+// 拖拽排序手柄（六点 grip）——分类管理 / 设置页共用的统一样式
+export default function DragHandle(props: React.HTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       {...props}

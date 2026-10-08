@@ -6,12 +6,10 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import { countExpensesByPaymentMethod, countExpensesByType } from '../data/database'
 import {
   DndContext,
-  DragOverlay,
   closestCenter,
   PointerSensor,
   useSensor,
   useSensors,
-  type DragStartEvent,
   type DragEndEvent,
 } from '@dnd-kit/core'
 import {
@@ -20,28 +18,9 @@ import {
   useSortable,
   arrayMove,
 } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 import type { PaymentMethodConfig, TxTypeConfig, TxCategory } from '../data/types'
-
-/** 拖拽手柄（与分类管理一致） */
-function DragHandle(props: React.HTMLAttributes<HTMLButtonElement>) {
-  return (
-    <button
-      {...props}
-      className="w-6 h-7 flex items-center justify-center rounded text-slate-300 hover:text-primary hover:bg-primary/10 cursor-grab active:cursor-grabbing transition-colors flex-shrink-0"
-      title="拖拽排序"
-    >
-      <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-        <circle cx="9" cy="5" r="1.5" />
-        <circle cx="15" cy="5" r="1.5" />
-        <circle cx="9" cy="12" r="1.5" />
-        <circle cx="15" cy="12" r="1.5" />
-        <circle cx="9" cy="19" r="1.5" />
-        <circle cx="15" cy="19" r="1.5" />
-      </svg>
-    </button>
-  )
-}
+import DragHandle from '../components/DragHandle'
+import { SORTABLE_TRANSITION, restrictToVerticalAxis, sortableRowStyle } from '../components/sortableConfig'
 
 /** 修改名称按钮 */
 function EditButton({ onClick, title }: { onClick: () => void; title: string }) {
@@ -95,12 +74,12 @@ function SortablePaymentRow({
   onCloseIcon: () => void
   onDelete: () => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.35 : undefined,
-  }
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    transition: SORTABLE_TRANSITION,
+  })
+  // 拖拽中不改变任何外观，只让整行跟着指针上下移动（详见 sortableConfig.ts）
+  const style = sortableRowStyle(transform, transition, isDragging)
   return (
     <div ref={setNodeRef} style={style} className="bg-white rounded-xl border border-slate-100 shadow-sm flex items-center gap-2 px-4 py-3 relative">
       <DragHandle {...attributes} {...listeners} />
@@ -165,12 +144,12 @@ function SortableTxRow({
   onCloseIcon: () => void
   onDelete: () => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.35 : undefined,
-  }
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    transition: SORTABLE_TRANSITION,
+  })
+  // 拖拽中不改变任何外观，只让整行跟着指针上下移动（详见 sortableConfig.ts）
+  const style = sortableRowStyle(transform, transition, isDragging)
   const badge = CATEGORY_BADGE[tt.category]
   return (
     <div ref={setNodeRef} style={style} className="bg-white rounded-xl border border-slate-100 shadow-sm flex items-center gap-2 px-4 py-3 relative">
@@ -246,8 +225,7 @@ export default function SettingsPage() {
   const [showTtPicker, setShowTtPicker] = useState(false)
   const [deleteTt, setDeleteTt] = useState<{ id: number; name: string; count: number } | null>(null)
 
-  // —— 拖拽状态 ——
-  const [activeDragId, setActiveDragId] = useState<string | null>(null)
+  // —— 拖拽传感器（指针移动 5px 才判定为拖拽，避免单击被误判成拖动）——
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
   // ===== 支付方式操作 =====
@@ -344,7 +322,6 @@ export default function SettingsPage() {
   // ===== 拖拽 =====
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
-    setActiveDragId(null)
     if (!over || active.id === over.id) return
     const activeStr = String(active.id)
     const overStr = String(over.id)
@@ -360,29 +337,6 @@ export default function SettingsPage() {
       if (oldIdx !== -1 && newIdx !== -1) reorderTxTypes(arrayMove(ids, oldIdx, newIdx))
     }
   }
-
-  const dragOverlayContent = (() => {
-    if (!activeDragId) return null
-    if (activeDragId.startsWith('pm-')) {
-      const pm = paymentMethods.find((p) => `pm-${p.id}` === activeDragId)
-      return pm ? (
-        <div className="bg-white rounded-lg border border-primary/30 shadow-lg px-4 py-2 flex items-center gap-2">
-          <span className="text-xl">{pm.icon}</span>
-          <span className="text-sm font-semibold text-slate-700">{pm.name}</span>
-        </div>
-      ) : null
-    }
-    if (activeDragId.startsWith('tt-')) {
-      const tt = txTypes.find((t) => `tt-${t.id}` === activeDragId)
-      return tt ? (
-        <div className="bg-white rounded-lg border border-primary/30 shadow-lg px-4 py-2 flex items-center gap-2">
-          <span className="text-xl">{tt.icon}</span>
-          <span className="text-sm font-semibold text-slate-700">{tt.name}</span>
-        </div>
-      ) : null
-    }
-    return null
-  })()
 
   if (loading) {
     return <div className="text-center py-16 text-slate-400 text-base">加载中...</div>
@@ -404,9 +358,8 @@ export default function SettingsPage() {
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
-          onDragStart={(e: DragStartEvent) => setActiveDragId(String(e.active.id))}
+          modifiers={[restrictToVerticalAxis]}
           onDragEnd={handleDragEnd}
-          onDragCancel={() => setActiveDragId(null)}
         >
           <SortableContext items={paymentMethods.map((p) => `pm-${p.id}`)} strategy={verticalListSortingStrategy}>
             <div className="space-y-2">
@@ -430,7 +383,6 @@ export default function SettingsPage() {
               ))}
             </div>
           </SortableContext>
-          <DragOverlay>{dragOverlayContent}</DragOverlay>
         </DndContext>
 
         <AddBlock title="新增支付方式">
@@ -463,9 +415,8 @@ export default function SettingsPage() {
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
-          onDragStart={(e: DragStartEvent) => setActiveDragId(String(e.active.id))}
+          modifiers={[restrictToVerticalAxis]}
           onDragEnd={handleDragEnd}
-          onDragCancel={() => setActiveDragId(null)}
         >
           <SortableContext items={txTypes.map((t) => `tt-${t.id}`)} strategy={verticalListSortingStrategy}>
             <div className="space-y-2">
@@ -489,7 +440,6 @@ export default function SettingsPage() {
               ))}
             </div>
           </SortableContext>
-          <DragOverlay>{dragOverlayContent}</DragOverlay>
         </DndContext>
 
         <AddBlock title="新增收支类型">

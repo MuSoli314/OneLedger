@@ -52,6 +52,7 @@ frontend/
 │   ├── webDb.ts           #   网页版数据层：sql.js + IndexedDB + isTauri() 判定
 │   ├── dateUtils.ts       #   本地日期工具（杜绝 UTC 时区 Bug）
 │   ├── calcUtils.ts       #   金额算式解析（+ - * / 括号，递归下降，无 eval）
+│   ├── reorderUtils.ts    #   拖拽重排工具（按 id 列表重排数组，乐观更新用，纯函数）
 │   ├── lunarUtils.ts      #   农历/节气/节日/黄历（缓存计算结果）
 │   ├── emojis.ts          #   emoji 候选列表（分类/设置共用）
 │   └── lunar-javascript.d.ts  # 第三方库手写类型声明
@@ -71,7 +72,8 @@ frontend/
 │   ├── CategoryAddPopover.tsx #   「添加」按钮弹出的大类+小类联动选择面板（支持自定义）
 │   ├── PaymentMethodTotals.tsx #  每日支付方式统计徽章（桌面/移动两态复用）
 │   ├── expenseListTypes.ts    #   记账列表专用类型（LocalRow/EditField/EditForm）
-│   ├── CategoryDragHandle.tsx #   拖拽排序手柄（六点 grip）
+│   ├── DragHandle.tsx         #   拖拽排序手柄（六点 grip，两页共用）
+│   ├── sortableConfig.ts      #   拖拽排序统一配置（让位动画/垂直锁定/行样式）
 │   ├── SortableCategoryRow.tsx #  分类管理可拖拽大类行（标题/改名/图标选择/小类插槽）
 │   ├── SortableSubCategoryRow.tsx # 分类管理可拖拽小类行（默认模板行内编辑，导出 EditField/SubEditForm）
 │   ├── SystemDefaultCategories.tsx # 分类管理「系统默认」只读列（出厂种子清单展示 + 一键恢复按钮）
@@ -187,6 +189,10 @@ CategoryContext / SettingsContext（缓存树形数据，操作后自动 refresh
 6. **CSV 导出**：`expensesToCSV` 带 BOM + 双引号转义，Excel 直接打开不乱码。
 7. **预算颜色**：主题色 `#6366f1` 正常 → `amber` ≥80% → `red` 超支（Tailwind `@theme` 的 `--color-primary`）。
 8. **拖拽排序**：@dnd-kit，写库走 `reorderCategories / reorderSubCategories / reorderPaymentMethods / reorderTxTypes`。
+   - 统一配置在 `components/sortableConfig.ts`：`SORTABLE_TRANSITION`（让位动画 150ms）、`restrictToVerticalAxis`（只许上下拖）、`sortableRowStyle()`（行样式，含拖拽中的 `zIndex`）。四个可排序行组件全部引同一份，改手感只改这一处。
+   - **不用 `<DragOverlay>`**：dnd-kit 在 `useDragOverlay` 为 false 时会自动让被拖节点本身跟随指针（`shouldDisplaceDragSource`），且此时不施加过渡，跟手不延迟；拖拽中的行与静止时样式完全一致。
+   - **上下文必须乐观更新**：`reorderXxx` 先同步 `setState` 重排（`data/reorderUtils.ts` 的 `applyOrder`），再后台落库。否则 dnd-kit 的落位动画（松手瞬间现测被拖节点位置为终点）会朝旧位置飞，即「回影」。
+   - 注意：卡片容器**不要加 `overflow-hidden`**，否则会把拖到容器外的小类行裁掉（`SortableCategoryRow` 已因此去掉）。
 
 ---
 

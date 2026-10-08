@@ -15,6 +15,7 @@ import {
   updateSubCategoryName as dbUpdateSubCategoryName,
 } from '../data/database'
 import type { CategoryWithChildren, TransactionType } from '../data/types'
+import { applyOrder } from '../data/reorderUtils'
 
 interface CategoryContextValue {
   categories: CategoryWithChildren[]
@@ -35,36 +36,13 @@ interface CategoryContextValue {
 
 const CategoryContext = createContext<CategoryContextValue>(null!)
 
-/**
- * 乐观重排：按 orderedIds 把现有分类数组重新排序（同步、纯内存）。
- * 找不到对应 id / 数量对不上（并发增删）时原样返回，交给数据库结果兜底。
- */
-function applyCategoryOrder(prev: CategoryWithChildren[], orderedIds: number[]): CategoryWithChildren[] {
-  const byId = new Map(prev.map((c) => [c.id, c]))
-  const next: CategoryWithChildren[] = []
-  for (const id of orderedIds) {
-    const cat = byId.get(id)
-    if (cat) next.push(cat)
-  }
-  if (next.length !== prev.length) return prev
-  // 顺序没变化就返回原数组，让 React 跳过这次重渲染
-  if (next.every((c, i) => c === prev[i])) return prev
-  return next
-}
-
-/** 乐观重排小类：orderedIds 必须是同一个大类下的全部小类 id */
+/** 乐观重排小类：orderedIds 必须是同一个大类下的全部小类 id（applyOrder 见 reorderUtils） */
 function applySubOrder(prev: CategoryWithChildren[], orderedIds: number[]): CategoryWithChildren[] {
   if (orderedIds.length === 0) return prev
   const target = prev.find((c) => c.children.some((s) => s.id === orderedIds[0]))
   if (!target) return prev
-  const byId = new Map(target.children.map((s) => [s.id, s]))
-  const nextChildren: CategoryWithChildren['children'] = []
-  for (const id of orderedIds) {
-    const sub = byId.get(id)
-    if (sub) nextChildren.push(sub)
-  }
-  if (nextChildren.length !== target.children.length) return prev
-  if (nextChildren.every((s, i) => s === target.children[i])) return prev
+  const nextChildren = applyOrder(target.children, orderedIds)
+  if (nextChildren === target.children) return prev
   return prev.map((c) => (c.id === target.id ? { ...c, children: nextChildren } : c))
 }
 
@@ -144,7 +122,7 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
   // dnd-kit 的落位动画会在松手那一刻现测被拖卡片的位置作为动画终点，
   // 如果等数据库写完（N 次 UPDATE + 一次全量重查）才 setState，动画就会飞回旧位置（回影）。
   const reorderCategories = useCallback(async (orderedIds: number[]) => {
-    setCategories((prev) => applyCategoryOrder(prev, orderedIds))
+    setCategories((prev) => applyOrder(prev, orderedIds))
     try {
       await dbReorderCategories(orderedIds)
     } catch (err) {

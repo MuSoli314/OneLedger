@@ -629,10 +629,9 @@ export async function updatePaymentMethodIcon(id: number, icon: string): Promise
 
 // 拖拽后批量更新顺序
 export async function reorderPaymentMethods(orderedIds: number[]): Promise<void> {
+  if (orderedIds.length === 0) return
   const database = await getDb()
-  for (let i = 0; i < orderedIds.length; i++) {
-    await database.execute('UPDATE payment_methods SET sort_order=$1 WHERE id=$2', [i, orderedIds[i]])
-  }
+  await database.execute(buildReorderSql('payment_methods', orderedIds.length), reorderParams(orderedIds))
 }
 
 // 某支付方式的在用笔数（删除确认弹窗提示用）
@@ -693,10 +692,9 @@ export async function updateTxTypeIcon(id: number, icon: string): Promise<void> 
 
 // 拖拽后批量更新顺序
 export async function reorderTxTypes(orderedIds: number[]): Promise<void> {
+  if (orderedIds.length === 0) return
   const database = await getDb()
-  for (let i = 0; i < orderedIds.length; i++) {
-    await database.execute('UPDATE tx_types SET sort_order=$1 WHERE id=$2', [i, orderedIds[i]])
-  }
+  await database.execute(buildReorderSql('tx_types', orderedIds.length), reorderParams(orderedIds))
 }
 
 // 某收支类型的在用笔数（删除确认弹窗提示用）

@@ -14,6 +14,7 @@ import {
   reorderTxTypes as dbReorderTxTypes,
 } from '../data/database'
 import { PAYMENT_METHODS, TRANSACTION_TYPES } from '../data/categories'
+import { applyOrder } from '../data/reorderUtils'
 import type { PaymentMethodConfig, TxTypeConfig, TxCategory } from '../data/types'
 
 interface SettingsContextValue {
@@ -91,9 +92,17 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     await refresh()
   }, [refresh])
 
+  // ===== 拖拽排序 =====
+  // ⚠️ 与分类管理同一套写法：先同步改内存顺序（乐观更新），再后台落库。
+  // dnd-kit 的落位动画在松手瞬间现测被拖行位置作为动画终点，等数据库写完才 setState 会飞回旧位置（回影）。
   const reorderPaymentMethods = useCallback(async (orderedIds: number[]) => {
-    await dbReorderPaymentMethods(orderedIds)
-    await refresh()
+    setPaymentMethods((prev) => applyOrder(prev, orderedIds))
+    try {
+      await dbReorderPaymentMethods(orderedIds)
+    } catch (err) {
+      console.error('保存支付方式顺序失败:', err)
+      await refresh() // 落库失败才回滚成库里的真实顺序
+    }
   }, [refresh])
 
   const addTxType = useCallback(async (name: string, icon: string, category: TxCategory) => {
@@ -117,8 +126,13 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   }, [refresh])
 
   const reorderTxTypes = useCallback(async (orderedIds: number[]) => {
-    await dbReorderTxTypes(orderedIds)
-    await refresh()
+    setTxTypes((prev) => applyOrder(prev, orderedIds))
+    try {
+      await dbReorderTxTypes(orderedIds)
+    } catch (err) {
+      console.error('保存收支类型顺序失败:', err)
+      await refresh()
+    }
   }, [refresh])
 
   return (

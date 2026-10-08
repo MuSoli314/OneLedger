@@ -111,6 +111,7 @@ OneLedger/
 │   │   ├── webDb.ts              # 网页版数据层（sql.js + IndexedDB）
 │   │   ├── dateUtils.ts          # 本地日期工具（避免 UTC 时区问题）
 │   │   ├── calcUtils.ts          # 金额表达式解析（+ - * / 与括号，无 eval）
+│   │   ├── reorderUtils.ts       # 拖拽重排通用工具（乐观更新用）
 │   │   ├── lunarUtils.ts         # 农历 / 节气 / 节日 / 黄历工具
 │   │   ├── lunar-javascript.d.ts # lunar-javascript 缺失类型声明补充
 │   │   └── emojis.ts             # emoji 候选列表
@@ -131,7 +132,8 @@ OneLedger/
 │   │   ├── PaymentMethodTotals.tsx  # 每日支付方式统计徽章
 │   │   ├── expenseListTypes.ts      # 记账列表专用类型（LocalRow/EditField/EditForm）
 │   │   ├── EditExpenseDialog.tsx # 记录完整编辑弹窗（含日期）
-│   │   ├── CategoryDragHandle.tsx   # 拖拽排序手柄
+│   │   ├── DragHandle.tsx           # 拖拽排序手柄（分类管理/设置页共用）
+│   │   ├── sortableConfig.ts        # 拖拽排序统一配置（动画/垂直锁定/行样式）
 │   │   ├── SortableCategoryRow.tsx  # 分类管理可拖拽大类行
 │   │   ├── SortableSubCategoryRow.tsx # 分类管理可拖拽小类行（默认模板行内编辑）
 │   │   ├── SystemDefaultCategories.tsx # 分类管理「系统默认」只读列（一键恢复出厂分类）

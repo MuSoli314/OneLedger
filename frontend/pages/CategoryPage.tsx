@@ -20,16 +20,13 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
-  type Modifier,
 } from '@dnd-kit/core'
 import {
   SortableContext,
   verticalListSortingStrategy,
   arrayMove,
 } from '@dnd-kit/sortable'
-
-// 只允许上下拖动（横向锁死）：否则拖快一点卡片会跟着鼠标左右飘
-const restrictToVerticalAxis: Modifier = ({ transform }) => ({ ...transform, x: 0 })
+import { restrictToVerticalAxis } from '../components/sortableConfig'
 
 export default function CategoryPage() {
   const {

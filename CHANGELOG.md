@@ -32,6 +32,16 @@
   - 附带效果：拖拽中不再有半透明残影，落位动画改由「transform 归零 + 乐观更新」承担。
   - ⚠️ 设置页（`SettingsPage.tsx`，支付方式/收支类型）仍是旧写法（`DragOverlay` + `opacity: 0.35`），本次未动。
 
+### 变更
+- **拖拽排序全 App 统一**（2026-10-08）：设置页的支付方式 / 收支类型排序与分类管理存在**完全相同**的三个问题（回影、拖拽中变样、N 次串行写库），一并改掉，并把公共部分抽成单一来源：
+  - 新增 `components/sortableConfig.ts`：`SORTABLE_TRANSITION`（让位动画 150ms）、`restrictToVerticalAxis`（横向锁死，只许上下拖）、`sortableRowStyle()`（行样式，含拖拽中的 `zIndex`）。四个可排序行组件（大类/小类/支付方式/收支类型）全部引同一份，**改手感只改这一处**。
+  - 新增 `data/reorderUtils.ts` 的 `applyOrder()`：按 id 列表重排数组的纯函数（含「id 对不上就放弃」「顺序未变返回原引用」两道防御），`CategoryContext` / `SettingsContext` 共用。
+  - `SettingsContext.reorderPaymentMethods` / `reorderTxTypes` 改为与分类一致的乐观更新（先同步 `setState`、再后台落库、失败才 `refresh()` 回滚）。
+  - `database.ts` 的 `reorderPaymentMethods` / `reorderTxTypes` 改用既有的 `buildReorderSql()` 批量 SQL（N 次串行 UPDATE → 1 次）。四条重排语句已用 sql.js 一并验证：categories / subcategories / payment_methods / tx_types 顺序与行数均正确。
+  - `SettingsPage`：删掉 `DragOverlay`、`activeDragId`、拖拽浮层内容、`opacity: 0.35`，删掉与分类管理重复的本地 `DragHandle`；两个 `DndContext` 都加上 `restrictToVerticalAxis`。
+  - `CategoryDragHandle.tsx` 重命名为 `DragHandle.tsx`（组件名同步改为 `DragHandle`），因为它已被设置页复用，不再只是分类管理专用。
+  - 顺手解决裁切：`SortableCategoryRow` 卡片上的 `overflow-hidden` 会让拖到卡片外的小类行被裁掉，已移除（卡片内没有需要裁剪的实色子元素，圆角由自身 `radius` 呈现，视觉无变化）。
+
 ---
 
 ## [2.1.0] - 2026-08-16

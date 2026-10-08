@@ -1,11 +1,11 @@
 // 分类管理页「可拖拽的小类行」（默认开关 + 非日常标记 + 名称/默认模板行内编辑 + 删除）
 import { useEffect, useRef } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 import { useSettings } from '../contexts/SettingsContext'
 import type { TransactionType } from '../data/types'
 import InlineSelect from './InlineSelect'
-import CategoryDragHandle from './CategoryDragHandle'
+import DragHandle from './DragHandle'
+import { SORTABLE_TRANSITION, sortableRowStyle } from './sortableConfig'
 
 /** 小类行内编辑可聚焦的字段 */
 export type EditField = 'sub_name' | 'default_amount' | 'default_payment_method' | 'default_type' | 'default_note'
@@ -57,18 +57,12 @@ export default function SortableSubCategoryRow({
   // 让位动画调快一些（默认 200ms 偏拖沓），落位更利落
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
-    transition: { duration: 150, easing: 'cubic-bezier(0.2, 0, 0, 1)' },
+    transition: SORTABLE_TRANSITION,
   })
   const { paymentMethods, txTypes } = useSettings()
 
-  // 拖拽中不改变任何外观（不加阴影、不改透明度、不换元素），只让整行跟着指针移动。
-  // zIndex 是为了让被拖的行盖住相邻行（transform 会新建层叠上下文，DOM 靠后的行会压住它）。
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    position: 'relative',
-    zIndex: isDragging ? 10 : undefined,
-  }
+  // 拖拽中不改变任何外观，只让整行跟着指针上下移动（详见 sortableConfig.ts）
+  const style = sortableRowStyle(transform, transition, isDragging)
 
   // 编辑控件 refs，按 focusField 聚焦
   const subNameRef = useRef<HTMLInputElement | null>(null)
@@ -113,7 +107,7 @@ export default function SortableSubCategoryRow({
       {isEditing ? (
         <div className="w-6 flex-shrink-0" />
       ) : (
-        <CategoryDragHandle
+        <DragHandle
           {...attributes}
           {...listeners}
           onClick={(e) => e.stopPropagation()}

@@ -136,6 +136,7 @@ OneLedger/
 │   │   ├── categories.ts         # 默认分类 / 支付方式 / 收支类型种子数据
 │   │   ├── dateUtils.ts          # 本地日期工具（避免 UTC 时区问题）
 │   │   ├── calcUtils.ts          # 金额表达式解析（+ - * / 与括号，递归下降，无 eval）
+│   │   ├── reorderUtils.ts       # 拖拽重排通用工具（按 id 列表重排数组，乐观更新用，纯函数）
 │   │   ├── database.ts           # SQLite 数据库操作（schema 唯一维护处，桌面/网页自适应）
 │   │   ├── webDb.ts              # 网页版数据层（sql.js + IndexedDB 持久化）
 │   │   ├── lunarUtils.ts         # 农历 / 节气 / 节日 / 黄历工具（lunar-javascript）
@@ -153,7 +154,8 @@ OneLedger/
 │   │   ├── CategoryAddPopover.tsx   # 「添加」按钮弹出的大类+小类联动选择面板（支持自定义）
 │   │   ├── PaymentMethodTotals.tsx  # 每日支付方式统计徽章（桌面/移动两态复用）
 │   │   ├── expenseListTypes.ts      # 记账列表专用类型（LocalRow/EditField/EditForm）
-│   │   ├── CategoryDragHandle.tsx   # 拖拽排序手柄（六点 grip）
+│   │   ├── DragHandle.tsx           # 拖拽排序手柄（六点 grip，分类管理/设置页共用）
+│   │   ├── sortableConfig.ts        # 拖拽排序统一配置（让位动画/垂直锁定/行样式，全 App 共用）
 │   │   ├── SortableCategoryRow.tsx  # 分类管理可拖拽大类行（标题/改名/图标选择/小类插槽）
 │   │   ├── SortableSubCategoryRow.tsx # 分类管理可拖拽小类行（默认模板行内编辑，导出 EditField/SubEditForm）
 │   │   ├── SystemDefaultCategories.tsx # 分类管理「系统默认」只读列（出厂种子分类 + 一键恢复到「我的分类」）
@@ -322,7 +324,11 @@ CategoryContext.tsx         ←── 拉取分类树，全局共享避免重复
 - **行内编辑**：记录列表 / 分类管理 / 设置页均采用行内编辑（点格子进入、回车或点外部自动保存、Esc 关闭），金额统一用 `calcUtils.evaluateExpression` 校验（支持算式如 `5*2`，负数拦截，0 金额允许保存后标红提醒）。编辑旧记录时不自动填充默认模板值。记录行的完整编辑（含日期）走 `EditExpenseDialog.tsx` 弹窗（悬浮行编辑按钮进入），保存仍经 `updateExpense`。
 - **统计口径**：所有「支出」统计（蓝色卡 / 分类排行 / 当月支出图 / 每日小计 / 支付方式统计）只统计收支类型为 `expense` 的记录；收入、不计类型不参与。口径统一由 `expenseCodes`（SettingsContext）或 SQL 中 `type IN (SELECT code FROM tx_types WHERE category='expense')` 保证。
 - **CSV 导出**：`expensesToCSV()` 函数使用 BOM + 双引号转义，确保 Excel 正确识别中文字符。
-- **拖拽排序**：`@dnd-kit` 实现分类管理页面的拖拽重排，`reorderCategories` / `reorderSubCategories` 批量写入 `sort_order`。
+- **拖拽排序**：`@dnd-kit` 统一实现（分类管理 + 设置页），配置集中在 `components/sortableConfig.ts`。三条铁律：
+  1. **不用 `<DragOverlay>`**——让真实的行自己跟着指针移动，拖拽中的行与静止时样式完全一致；只在拖拽中提升 `zIndex`（不可见）以盖住相邻行。
+  2. **乐观更新**——`reorderXxx` 必须**先同步 `setState` 改内存顺序、再后台落库**。dnd-kit 的落位动画在松手瞬间现测被拖节点位置作为动画终点，等数据库写完才更新界面会导致动画飞回旧位置（回影）。落库失败才 `refresh()` 回滚。
+  3. **批量落库**——重排统一走 `database.ts` 的 `buildReorderSql()`（单条 `CASE WHEN` UPDATE 代替 N 次串行 UPDATE）。
+  当前使用方：`CategoryContext`（大类/小类）、`SettingsContext`（支付方式/收支类型）。
 - **预算颜色**：Tailwind 主题色 `--color-primary: #6366f1`（正常）、`amber` 接近（≥80%）、`red` 超支。
 - **时间范围联动**：记账页通过 `dateUtils.getRangeDates` 计算起止日（本地日期），`database.ts` 的 `listExpenses(startDate/endDate)` / `getDailyTotals` / `getStatsByRange` 按范围查询聚合，蓝色卡 / 列表 / 右栏排行 / 顶部折线图随之联动（折线图标题即范围标签）。日历可自选月份（默认本月，左右箭头微调 + 有记录月份下拉），选月份与蓝色模块双向联动：日历选 X 月 = 蓝色模块切到「历史月份 X」，选本月 = 「本月」；反向蓝色模块切整月范围（本月/历史/上月）时日历跟随。点击日历某天 = 时间范围设为「自定义」且起止都是该天（再点同一天回到本月）。独立统计页固定当前自然月，不随记账页范围切换。
 
