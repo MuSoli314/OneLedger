@@ -40,6 +40,14 @@
   - `database.ts` 的 `reorderPaymentMethods` / `reorderTxTypes` 改用既有的 `buildReorderSql()` 批量 SQL（N 次串行 UPDATE → 1 次）。四条重排语句已用 sql.js 一并验证：categories / subcategories / payment_methods / tx_types 顺序与行数均正确。
   - `SettingsPage`：删掉 `DragOverlay`、`activeDragId`、拖拽浮层内容、`opacity: 0.35`，删掉与分类管理重复的本地 `DragHandle`；两个 `DndContext` 都加上 `restrictToVerticalAxis`。
   - `CategoryDragHandle.tsx` 重命名为 `DragHandle.tsx`（组件名同步改为 `DragHandle`），因为它已被设置页复用，不再只是分类管理专用。
+
+### 新增
+- **拖拽排序支持触摸（为手机版铺路）**（2026-10-08）：原先只注册了 `PointerSensor`（移动 5px 即拖）。它在手机上有硬伤——手指一碰行就进入拖拽，用户想上下滑动页面会变成拖拽排序，页面滚不动。
+  - `sortableConfig.ts` 新增统一的 `useSortableSensors()`：`MouseSensor`（移动 5px 即拖，桌面手感不变）+ `TouchSensor`（长按 250ms 才拖，期间手指移动超过 5px 立即取消）。触摸下手指滑动 = 正常滚动页面，长按手柄 0.25 秒 = 进入拖拽排序。两个页面改为调用它，不再各写一份传感器。
+  - 必须用 Mouse + Touch 两个传感器替代 `PointerSensor`：后者同时接管鼠标与触摸，无法给两者设不同约束（官方文档推荐的组合就是这两个）。
+  - `DragHandle.tsx` 加 `touch-manipulation`（官方要求，触摸事件下 dnd-kit 才能在 `touchmove` 里 `preventDefault` 阻止页面滚动）与 `select-none`（长按期间不选中文字/图标）。
+  - 触摸设备上通过 Tailwind 的 `pointer-coarse:` 变体把手柄接触面积从 24×28 放大到 36×44、图标 14px → 20px（桌面鼠标环境尺寸不变），照顾手指的点击精度。
+  - ⚠️ 本机无法用真实触摸设备验证，按 dnd-kit 官方文档实现；等真机（手机浏览器）测试时如手感需调整，改 `useSortableSensors()` 里的 `delay` / `tolerance` 即可。
   - 顺手解决裁切：`SortableCategoryRow` 卡片上的 `overflow-hidden` 会让拖到卡片外的小类行被裁掉，已移除（卡片内没有需要裁剪的实色子元素，圆角由自身 `radius` 呈现，视觉无变化）。
 
 ---

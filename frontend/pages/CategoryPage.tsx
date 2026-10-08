@@ -16,9 +16,6 @@ import SortableSubCategoryRow, { type EditField, type SubEditForm } from '../com
 import {
   DndContext,
   closestCenter,
-  PointerSensor,
-  useSensor,
-  useSensors,
   type DragEndEvent,
 } from '@dnd-kit/core'
 import {
@@ -26,7 +23,7 @@ import {
   verticalListSortingStrategy,
   arrayMove,
 } from '@dnd-kit/sortable'
-import { restrictToVerticalAxis } from '../components/sortableConfig'
+import { restrictToVerticalAxis, useSortableSensors } from '../components/sortableConfig'
 
 export default function CategoryPage() {
   const {
@@ -78,10 +75,8 @@ export default function CategoryPage() {
   const editingSubIdRef = useRef<number | null>(null)
   const subEditFormRef = useRef(subEditForm)
 
-  // 拖拽传感器：指针移动 5px 才判定为拖拽（避免单击被误判成拖动）
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
-  )
+  // 拖拽传感器（鼠标移动 5px / 触摸长按 0.25 秒），统一配置见 sortableConfig.ts
+  const sensors = useSortableSensors()
 
   editingSubIdRef.current = editingSubId
   subEditFormRef.current = subEditForm

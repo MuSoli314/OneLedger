@@ -132,8 +132,8 @@ OneLedger/
 │   │   ├── PaymentMethodTotals.tsx  # 每日支付方式统计徽章
 │   │   ├── expenseListTypes.ts      # 记账列表专用类型（LocalRow/EditField/EditForm）
 │   │   ├── EditExpenseDialog.tsx # 记录完整编辑弹窗（含日期）
-│   │   ├── DragHandle.tsx           # 拖拽排序手柄（分类管理/设置页共用）
-│   │   ├── sortableConfig.ts        # 拖拽排序统一配置（动画/垂直锁定/行样式）
+│   │   ├── DragHandle.tsx           # 拖拽排序手柄（两页共用，触摸设备自动放大）
+│   │   ├── sortableConfig.ts        # 拖拽排序统一配置（传感器/动画/垂直锁定/行样式）
 │   │   ├── SortableCategoryRow.tsx  # 分类管理可拖拽大类行
 │   │   ├── SortableSubCategoryRow.tsx # 分类管理可拖拽小类行（默认模板行内编辑）
 │   │   ├── SystemDefaultCategories.tsx # 分类管理「系统默认」只读列（一键恢复出厂分类）

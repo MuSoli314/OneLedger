@@ -7,9 +7,6 @@ import { countExpensesByPaymentMethod, countExpensesByType } from '../data/datab
 import {
   DndContext,
   closestCenter,
-  PointerSensor,
-  useSensor,
-  useSensors,
   type DragEndEvent,
 } from '@dnd-kit/core'
 import {
@@ -20,7 +17,7 @@ import {
 } from '@dnd-kit/sortable'
 import type { PaymentMethodConfig, TxTypeConfig, TxCategory } from '../data/types'
 import DragHandle from '../components/DragHandle'
-import { SORTABLE_TRANSITION, restrictToVerticalAxis, sortableRowStyle } from '../components/sortableConfig'
+import { SORTABLE_TRANSITION, restrictToVerticalAxis, sortableRowStyle, useSortableSensors } from '../components/sortableConfig'
 
 /** 修改名称按钮 */
 function EditButton({ onClick, title }: { onClick: () => void; title: string }) {
@@ -225,8 +222,8 @@ export default function SettingsPage() {
   const [showTtPicker, setShowTtPicker] = useState(false)
   const [deleteTt, setDeleteTt] = useState<{ id: number; name: string; count: number } | null>(null)
 
-  // —— 拖拽传感器（指针移动 5px 才判定为拖拽，避免单击被误判成拖动）——
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+  // —— 拖拽传感器（鼠标移动 5px / 触摸长按 0.25 秒），统一配置见 sortableConfig.ts ——
+  const sensors = useSortableSensors()
 
   // ===== 支付方式操作 =====
   const handleSavePmName = async () => {
