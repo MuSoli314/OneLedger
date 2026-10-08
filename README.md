@@ -6,7 +6,7 @@
 
 一笔（OneLedger）是一款面向个人用户的消费记账软件，支持 **Windows** 和 **Mac** 双平台，同时也提供部署在浏览器里的**网页版**。应用体积小（约 13 MB）、启动快、操作直观，帮助用户轻松记录日常花销并掌握支出情况。
 
-> 🧑‍💻 **开发者/接手项目的人**：先读 [ARCHITECTURE.md](ARCHITECTURE.md)（架构、命名规范、数据流、表结构），再回来对照本文档的功能说明。
+> 🧑‍💻 **开发者/接手项目的人**：先读 [ARCHITECTURE.md](ARCHITECTURE.md)（架构、命名规范、数据流、表结构），再回来对照本文档的功能说明；每个版本的改动记录在 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
@@ -20,7 +20,7 @@
 - **查看**：记录按日期分组（默认折叠），每日小计只统计「计入支出」的记录
 - **筛选**：时间范围（近一周/近一月/本月/上月/历史月份/自定义）+ 支付方式 + 分类（大类/小类勾选）+ 日常/非日常 + 搜索，可叠加
 
-### 🏷️ 二级分类体系（11 大类 + 50+ 小类）
+### 🏷️ 二级分类体系（11 大类 + 56 小类）
 - 「分类管理」页**在线增删改**大类/小类、自定义图标（emoji 选择器）、**拖拽排序**
 - 小类可设**默认模板**（金额/支付方式/收支类型/备注/日常非日常），记账时自动带出
 - **默认大类开关**：勾选 ✓ 的大类才参与「添加某天」自动记账
@@ -112,6 +112,7 @@ OneLedger/
 │   │   ├── dateUtils.ts          # 本地日期工具（避免 UTC 时区问题）
 │   │   ├── calcUtils.ts          # 金额表达式解析（+ - * / 与括号，无 eval）
 │   │   ├── lunarUtils.ts         # 农历 / 节气 / 节日 / 黄历工具
+│   │   ├── lunar-javascript.d.ts # lunar-javascript 缺失类型声明补充
 │   │   └── emojis.ts             # emoji 候选列表
 │   ├── contexts/
 │   │   ├── CategoryContext.tsx   # 分类数据共享 Context
@@ -123,8 +124,17 @@ OneLedger/
 │   │   ├── MonthCalendar.tsx     # 支出日历（42 格热力日历）
 │   │   ├── LunarCard.tsx         # 农历黄历卡（宜/忌）
 │   │   ├── TrendChart.tsx        # 折线图（月度趋势 / 按天双线）
-│   │   ├── ExpenseList.tsx       # 消费记录列表（按日分组 + 行内编辑 + 快捷添加）
+│   │   ├── ExpenseList.tsx       # 消费记录列表主组件（按日分组 + 行内编辑 + 快捷添加）
+│   │   ├── ExpenseRow.tsx        # 单条记录行（行内编辑 + 非日常徽章 + 悬浮编辑/删除）
+│   │   ├── ExpenseCategoryGroup.tsx # 按日分组内的一级大类分组
+│   │   ├── CategoryAddPopover.tsx   # 「添加」按钮的大类+小类联动面板
+│   │   ├── PaymentMethodTotals.tsx  # 每日支付方式统计徽章
+│   │   ├── expenseListTypes.ts      # 记账列表专用类型（LocalRow/EditField/EditForm）
 │   │   ├── EditExpenseDialog.tsx # 记录完整编辑弹窗（含日期）
+│   │   ├── CategoryDragHandle.tsx   # 拖拽排序手柄
+│   │   ├── SortableCategoryRow.tsx  # 分类管理可拖拽大类行
+│   │   ├── SortableSubCategoryRow.tsx # 分类管理可拖拽小类行（默认模板行内编辑）
+│   │   ├── SystemDefaultCategories.tsx # 分类管理「系统默认」只读列（一键恢复出厂分类）
 │   │   ├── StatsPanel.tsx        # 右栏分类排行（勾选筛选）
 │   │   ├── DatePicker.tsx        # 日期选择
 │   │   ├── DateRangePicker.tsx   # 日期区间选择
@@ -145,6 +155,7 @@ OneLedger/
 ├── logo.png                      # 应用图标源图（1024×1024）
 ├── ARCHITECTURE.md               # ⭐ 架构说明（开发者必读：命名规范 / 数据流 / 表结构）
 ├── README.md                     # 产品文档（本文档）
+├── CHANGELOG.md                  # ⭐ 版本变更记录（Keep a Changelog 格式）
 ├── package.json                  # 项目依赖
 └── .github/workflows/release.yml # 发版自动构建安装包（打标签触发）
 ```
@@ -184,8 +195,9 @@ npm run tauri:build  # 构建桌面安装包
 ## 🚢 发版流程（GitHub 自动构建安装包）
 
 1. 修改版本号：`backend/tauri.conf.json` 的 `version` 字段（建议同步 `backend/Cargo.toml`）
-2. 提交并打标签：`git tag v2.0.0 && git push && git push origin v2.0.0`
-3. 等约 10~20 分钟，GitHub Releases 页面自动出现 Mac / Windows 安装包
+2. 在 [CHANGELOG.md](CHANGELOG.md) 里把「未发布」一节改成新版本号 + 日期
+3. 提交并打标签：`git tag v2.1.0 && git push && git push origin v2.1.0`
+4. 等约 10~20 分钟，GitHub Releases 页面自动出现 Mac / Windows 安装包
 
 详细说明见 `.github/workflows/release.yml` 顶部注释。
 
@@ -193,12 +205,15 @@ npm run tauri:build  # 构建桌面安装包
 
 ## 📋 版本历史
 
+完整变更记录见 **[CHANGELOG.md](CHANGELOG.md)**（按版本倒序，最新排在最上面）。已发布版本一览：
+
 | 版本 | 日期 | 说明 |
 |------|------|------|
-| v1.0.0 | 2026-07-19 | 正式版：P0 记账 + P1 统计 + P2 图表/预算/导出 |
+| v2.1.0 | 2026-08-16 | 首页两栏仪表盘、独立统计页、支出日历 + 农历黄历卡、记录完整编辑弹窗、日常/非日常区分、设置页、桌面+网页双形态、默认小类预设；前后端命名与工程规范化重构（Rust crate `one-ledger`、字段全 snake_case、拆分大文件、新增 `ARCHITECTURE.md`） |
 | v2.0.0 | 2026-07-22 | 全面代码审查修复版（时区修复、列表无上限、CSV 转义、schema 前端统一维护等） |
-| v2.0.0+ | 2026-08 | 首页两栏仪表盘改版、独立统计页、支出日历 + 农历黄历卡、记录完整编辑弹窗、日常/非日常区分、分类管理/支付方式/收支类型设置页、桌面+网页双形态、缺失日期快捷添加、默认小类预设 |
-| 2026-08（工程化） | — | 前后端命名统一（Rust crate `one-ledger`、`Expense.is_non_daily`、页面统一 `*Page` 命名）、新增 `ARCHITECTURE.md`、README 对齐真实代码、lint 0 警告 |
+| v1.0.0 | 2026-07-19 | 正式版：P0 记账 + P1 统计 + P2 图表/预算/导出 |
+
+> 「分类管理双栏（我的分类 + 系统默认只读列）」已提交、尚未发版，详见 CHANGELOG 的「未发布」一节。
 
 ---
 
