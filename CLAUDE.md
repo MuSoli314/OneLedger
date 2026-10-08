@@ -227,7 +227,7 @@ OneLedger/
 
 将来若购买 Apple 开发者证书和 Windows 签名证书，可在发布流程中加入签名环节，届时访客可正常双击打开。
 
-**当前版本**: v2.1.0（以 `backend/tauri.conf.json` 为准）
+**当前版本**: v2.2.0（以 `backend/tauri.conf.json` 为准）
 
 > 完整的历史版本与变更记录见 [CHANGELOG.md](CHANGELOG.md)（按版本倒序，最新排在最上面）；
 > 本文件只保留产品设计、技术选型、目录结构与当前状态，不再堆积逐次改动记录。

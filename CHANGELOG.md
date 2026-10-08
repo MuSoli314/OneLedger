@@ -9,14 +9,30 @@
 
 ---
 
-## [未发布]
+## [2.2.0] - 2026-10-08
 
-> 已提交到 `main`（`6a5267e`），尚未打版本标签；下次发版时改为版本号 + 日期即可。
+> 本轮为 2026-08-20 ~ 2026-10-08 的全部改动：分类管理双栏（我的分类 + 系统默认只读列）、拖拽排序全线修复与统一、拖拽排序支持触摸。
 
 ### 新增
 - **分类管理双栏**（2026-08-20）：「我的分类」可编辑 + 「系统默认」只读列。
   - 无论用户如何增删改，右侧始终展示 App 出厂内置的 11 大类 + 56 小类（数据直接读 `categories.ts` 种子清单，不查库、不受用户操作影响）。
   - 默认列每个大类/小类带「＋ 恢复」按钮，可一键按出厂种子配置加回「我的分类」（图标 / 默认小类标记 / 非日常标记 / 默认支付方式）；大类已存在则置灰提示、小类已存在则不重复添加；恢复单个小类时若大类已被删会自动一并重建。
+- **拖拽排序支持触摸（为手机版铺路）**（2026-10-08）：原先只注册了 `PointerSensor`（移动 5px 即拖）。它在手机上有硬伤——手指一碰行就进入拖拽，用户想上下滑动页面会变成拖拽排序，页面滚不动。
+  - `sortableConfig.ts` 新增统一的 `useSortableSensors()`：`MouseSensor`（移动 5px 即拖，桌面手感不变）+ `TouchSensor`（长按 250ms 才拖，期间手指移动超过 5px 立即取消）。触摸下手指滑动 = 正常滚动页面，长按手柄 0.25 秒 = 进入拖拽排序。两个页面改为调用它，不再各写一份传感器。
+  - 必须用 Mouse + Touch 两个传感器替代 `PointerSensor`：后者同时接管鼠标与触摸，无法给两者设不同约束（官方文档推荐的组合就是这两个）。
+  - `DragHandle.tsx` 加 `touch-manipulation`（官方要求，触摸事件下 dnd-kit 才能在 `touchmove` 里 `preventDefault` 阻止页面滚动）与 `select-none`（长按期间不选中文字/图标）。
+  - 触摸设备上通过 Tailwind 的 `pointer-coarse:` 变体把手柄接触面积从 24×28 放大到 36×44、图标 14px → 20px（桌面鼠标环境尺寸不变），照顾手指的点击精度。
+  - ⚠️ 本机无法用真实触摸设备验证，按 dnd-kit 官方文档实现；等真机（手机浏览器）测试时如手感需调整，改 `useSortableSensors()` 里的 `delay` / `tolerance` 即可。
+  - 顺手解决裁切：`SortableCategoryRow` 卡片上的 `overflow-hidden` 会让拖到卡片外的小类行被裁掉，已移除（卡片内没有需要裁剪的实色子元素，圆角由自身 `radius` 呈现，视觉无变化）。
+
+### 变更
+- **拖拽排序全 App 统一**（2026-10-08）：设置页的支付方式 / 收支类型排序与分类管理存在**完全相同**的三个问题（回影、拖拽中变样、N 次串行写库），一并改掉，并把公共部分抽成单一来源：
+  - 新增 `components/sortableConfig.ts`：`SORTABLE_TRANSITION`（让位动画 150ms）、`restrictToVerticalAxis`（横向锁死，只许上下拖）、`sortableRowStyle()`（行样式，含拖拽中的 `zIndex`）。四个可排序行组件（大类/小类/支付方式/收支类型）全部引同一份，**改手感只改这一处**。
+  - 新增 `data/reorderUtils.ts` 的 `applyOrder()`：按 id 列表重排数组的纯函数（含「id 对不上就放弃」「顺序未变返回原引用」两道防御），`CategoryContext` / `SettingsContext` 共用。
+  - `SettingsContext.reorderPaymentMethods` / `reorderTxTypes` 改为与分类一致的乐观更新（先同步 `setState`、再后台落库、失败才 `refresh()` 回滚）。
+  - `database.ts` 的 `reorderPaymentMethods` / `reorderTxTypes` 改用既有的 `buildReorderSql()` 批量 SQL（N 次串行 UPDATE → 1 次）。四条重排语句已用 sql.js 一并验证：categories / subcategories / payment_methods / tx_types 顺序与行数均正确。
+  - `SettingsPage`：删掉 `DragOverlay`、`activeDragId`、拖拽浮层内容、`opacity: 0.35`，删掉与分类管理重复的本地 `DragHandle`；两个 `DndContext` 都加上 `restrictToVerticalAxis`。
+  - `CategoryDragHandle.tsx` 重命名为 `DragHandle.tsx`（组件名同步改为 `DragHandle`），因为它已被设置页复用，不再只是分类管理专用。
 
 ### 修复
 - **分类管理拖拽排序「回影」**（2026-10-08）：松手后卡片会先滑回原位、再跳到新位置。成因是落位链路为「先写库再改界面」——`handleDragEnd` 要等 11 次串行 `UPDATE` + 一次全量重查共 13 次数据库往返走完才 `setCategories`；而 dnd-kit 的落位动画（默认 250ms）在松手瞬间就现测被拖卡片位置作为动画终点，此时界面还是旧顺序，于是动画朝旧位置飞。修复：
@@ -30,26 +46,7 @@
   - 两者叠加，等于「一个变样的浮层在飘 + 一个半透明的残影在原地」。
   - 修复：**移除 `<DragOverlay>`**，改为让真实行自己跟着指针移动（`useSortable` 的 `transform`，`useDragOverlay` 为 false 时 dnd-kit 会自动接管原节点且不加过渡）；**去掉 `opacity`**，不额外加阴影；只加不可见的 `position: relative` + 拖拽中 `zIndex: 10`（否则 DOM 靠后的行会盖住被拖的行）。同时删掉只为浮层服务的 `activeDragId` 状态与浮层内容。
   - 附带效果：拖拽中不再有半透明残影，落位动画改由「transform 归零 + 乐观更新」承担。
-  - ⚠️ 设置页（`SettingsPage.tsx`，支付方式/收支类型）仍是旧写法（`DragOverlay` + `opacity: 0.35`），本次未动。
-
-### 变更
-- **拖拽排序全 App 统一**（2026-10-08）：设置页的支付方式 / 收支类型排序与分类管理存在**完全相同**的三个问题（回影、拖拽中变样、N 次串行写库），一并改掉，并把公共部分抽成单一来源：
-  - 新增 `components/sortableConfig.ts`：`SORTABLE_TRANSITION`（让位动画 150ms）、`restrictToVerticalAxis`（横向锁死，只许上下拖）、`sortableRowStyle()`（行样式，含拖拽中的 `zIndex`）。四个可排序行组件（大类/小类/支付方式/收支类型）全部引同一份，**改手感只改这一处**。
-  - 新增 `data/reorderUtils.ts` 的 `applyOrder()`：按 id 列表重排数组的纯函数（含「id 对不上就放弃」「顺序未变返回原引用」两道防御），`CategoryContext` / `SettingsContext` 共用。
-  - `SettingsContext.reorderPaymentMethods` / `reorderTxTypes` 改为与分类一致的乐观更新（先同步 `setState`、再后台落库、失败才 `refresh()` 回滚）。
-  - `database.ts` 的 `reorderPaymentMethods` / `reorderTxTypes` 改用既有的 `buildReorderSql()` 批量 SQL（N 次串行 UPDATE → 1 次）。四条重排语句已用 sql.js 一并验证：categories / subcategories / payment_methods / tx_types 顺序与行数均正确。
-  - `SettingsPage`：删掉 `DragOverlay`、`activeDragId`、拖拽浮层内容、`opacity: 0.35`，删掉与分类管理重复的本地 `DragHandle`；两个 `DndContext` 都加上 `restrictToVerticalAxis`。
-  - `CategoryDragHandle.tsx` 重命名为 `DragHandle.tsx`（组件名同步改为 `DragHandle`），因为它已被设置页复用，不再只是分类管理专用。
-
-### 新增
-- **拖拽排序支持触摸（为手机版铺路）**（2026-10-08）：原先只注册了 `PointerSensor`（移动 5px 即拖）。它在手机上有硬伤——手指一碰行就进入拖拽，用户想上下滑动页面会变成拖拽排序，页面滚不动。
-  - `sortableConfig.ts` 新增统一的 `useSortableSensors()`：`MouseSensor`（移动 5px 即拖，桌面手感不变）+ `TouchSensor`（长按 250ms 才拖，期间手指移动超过 5px 立即取消）。触摸下手指滑动 = 正常滚动页面，长按手柄 0.25 秒 = 进入拖拽排序。两个页面改为调用它，不再各写一份传感器。
-  - 必须用 Mouse + Touch 两个传感器替代 `PointerSensor`：后者同时接管鼠标与触摸，无法给两者设不同约束（官方文档推荐的组合就是这两个）。
-  - `DragHandle.tsx` 加 `touch-manipulation`（官方要求，触摸事件下 dnd-kit 才能在 `touchmove` 里 `preventDefault` 阻止页面滚动）与 `select-none`（长按期间不选中文字/图标）。
-  - 触摸设备上通过 Tailwind 的 `pointer-coarse:` 变体把手柄接触面积从 24×28 放大到 36×44、图标 14px → 20px（桌面鼠标环境尺寸不变），照顾手指的点击精度。
-  - ⚠️ 本机无法用真实触摸设备验证，按 dnd-kit 官方文档实现；等真机（手机浏览器）测试时如手感需调整，改 `useSortableSensors()` 里的 `delay` / `tolerance` 即可。
-  - 顺手解决裁切：`SortableCategoryRow` 卡片上的 `overflow-hidden` 会让拖到卡片外的小类行被裁掉，已移除（卡片内没有需要裁剪的实色子元素，圆角由自身 `radius` 呈现，视觉无变化）。
-
+  - 设置页的同类问题随后在本次发版中一并修复，见上方「变更」一节。
 ---
 
 ## [2.1.0] - 2026-08-16
