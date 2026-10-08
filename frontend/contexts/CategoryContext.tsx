@@ -35,6 +35,39 @@ interface CategoryContextValue {
 
 const CategoryContext = createContext<CategoryContextValue>(null!)
 
+/**
+ * 乐观重排：按 orderedIds 把现有分类数组重新排序（同步、纯内存）。
+ * 找不到对应 id / 数量对不上（并发增删）时原样返回，交给数据库结果兜底。
+ */
+function applyCategoryOrder(prev: CategoryWithChildren[], orderedIds: number[]): CategoryWithChildren[] {
+  const byId = new Map(prev.map((c) => [c.id, c]))
+  const next: CategoryWithChildren[] = []
+  for (const id of orderedIds) {
+    const cat = byId.get(id)
+    if (cat) next.push(cat)
+  }
+  if (next.length !== prev.length) return prev
+  // 顺序没变化就返回原数组，让 React 跳过这次重渲染
+  if (next.every((c, i) => c === prev[i])) return prev
+  return next
+}
+
+/** 乐观重排小类：orderedIds 必须是同一个大类下的全部小类 id */
+function applySubOrder(prev: CategoryWithChildren[], orderedIds: number[]): CategoryWithChildren[] {
+  if (orderedIds.length === 0) return prev
+  const target = prev.find((c) => c.children.some((s) => s.id === orderedIds[0]))
+  if (!target) return prev
+  const byId = new Map(target.children.map((s) => [s.id, s]))
+  const nextChildren: CategoryWithChildren['children'] = []
+  for (const id of orderedIds) {
+    const sub = byId.get(id)
+    if (sub) nextChildren.push(sub)
+  }
+  if (nextChildren.length !== target.children.length) return prev
+  if (nextChildren.every((s, i) => s === target.children[i])) return prev
+  return prev.map((c) => (c.id === target.id ? { ...c, children: nextChildren } : c))
+}
+
 export function CategoryProvider({ children }: { children: React.ReactNode }) {
   const [categories, setCategories] = useState<CategoryWithChildren[]>([])
   const [loading, setLoading] = useState(true)
@@ -106,14 +139,28 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
     await refresh()
   }, [refresh])
 
+  // ===== 拖拽排序 =====
+  // ⚠️ 必须是「先改内存、再后台落库」的乐观更新：
+  // dnd-kit 的落位动画会在松手那一刻现测被拖卡片的位置作为动画终点，
+  // 如果等数据库写完（N 次 UPDATE + 一次全量重查）才 setState，动画就会飞回旧位置（回影）。
   const reorderCategories = useCallback(async (orderedIds: number[]) => {
-    await dbReorderCategories(orderedIds)
-    await refresh()
+    setCategories((prev) => applyCategoryOrder(prev, orderedIds))
+    try {
+      await dbReorderCategories(orderedIds)
+    } catch (err) {
+      console.error('保存分类顺序失败:', err)
+      await refresh() // 落库失败才回滚成库里的真实顺序
+    }
   }, [refresh])
 
   const reorderSubCategories = useCallback(async (orderedIds: number[]) => {
-    await dbReorderSubCategories(orderedIds)
-    await refresh()
+    setCategories((prev) => applySubOrder(prev, orderedIds))
+    try {
+      await dbReorderSubCategories(orderedIds)
+    } catch (err) {
+      console.error('保存小类顺序失败:', err)
+      await refresh()
+    }
   }, [refresh])
 
   return (

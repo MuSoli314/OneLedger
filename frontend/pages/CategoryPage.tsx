@@ -15,19 +15,21 @@ import SortableCategoryRow from '../components/SortableCategoryRow'
 import SortableSubCategoryRow, { type EditField, type SubEditForm } from '../components/SortableSubCategoryRow'
 import {
   DndContext,
-  DragOverlay,
   closestCenter,
   PointerSensor,
   useSensor,
   useSensors,
-  type DragStartEvent,
   type DragEndEvent,
+  type Modifier,
 } from '@dnd-kit/core'
 import {
   SortableContext,
   verticalListSortingStrategy,
   arrayMove,
 } from '@dnd-kit/sortable'
+
+// 只允许上下拖动（横向锁死）：否则拖快一点卡片会跟着鼠标左右飘
+const restrictToVerticalAxis: Modifier = ({ transform }) => ({ ...transform, x: 0 })
 
 export default function CategoryPage() {
   const {
@@ -79,8 +81,7 @@ export default function CategoryPage() {
   const editingSubIdRef = useRef<number | null>(null)
   const subEditFormRef = useRef(subEditForm)
 
-  // 拖拽状态
-  const [activeDragId, setActiveDragId] = useState<string | null>(null)
+  // 拖拽传感器：指针移动 5px 才判定为拖拽（避免单击被误判成拖动）
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   )
@@ -241,13 +242,10 @@ export default function CategoryPage() {
   }
 
   // ===== 拖拽事件处理 =====
-  const handleDragStart = (event: DragStartEvent) => {
-    setActiveDragId(String(event.active.id))
-  }
-
+  // 注意：不使用 <DragOverlay>，让被拖的行本身跟着指针移动（useSortable 的 transform），
+  // 这样拖拽中的行与静止时长得一模一样，只有位置在变。
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
-    setActiveDragId(null)
     if (!over || active.id === over.id) return
 
     const activeStr = String(active.id)
@@ -279,8 +277,6 @@ export default function CategoryPage() {
       }
     }
   }
-
-  const handleDragCancel = () => setActiveDragId(null)
 
   // ===== 从「系统默认」恢复到「我的分类」 =====
   // 按出厂种子配置恢复一个小类：建小类 + 默认支付方式（第一个默认值，与播种一致）+ 非日常标记 + 种子默认小类标记
@@ -340,37 +336,6 @@ export default function CategoryPage() {
     existingSubNames[c.name] = new Set(c.children.map((s) => s.name))
   }
 
-  // 拖拽中的浮层内容
-  const dragOverlayContent = (() => {
-    if (!activeDragId) return null
-    if (activeDragId.startsWith('cat-')) {
-      const id = parseInt(activeDragId.replace('cat-', ''))
-      const cat = categories.find((c) => c.id === id)
-      if (!cat) return null
-      return (
-        <div className="bg-white rounded-xl border border-primary/30 shadow-lg px-4 py-3 flex items-center gap-2">
-          <span className="text-lg">{cat.icon}</span>
-          <span className="text-sm font-semibold text-slate-700">{cat.name}</span>
-          <span className="text-[11px] text-slate-400">{cat.children.length}个子类</span>
-        </div>
-      )
-    }
-    if (activeDragId.startsWith('sub-')) {
-      const id = parseInt(activeDragId.replace('sub-', ''))
-      for (const cat of categories) {
-        const sub = cat.children.find((s) => s.id === id)
-        if (sub) {
-          return (
-            <div className="bg-white rounded-lg border border-primary/30 shadow-lg px-4 py-2 flex items-center gap-2">
-              <span className="text-sm text-slate-700">{sub.name}</span>
-            </div>
-          )
-        }
-      }
-    }
-    return null
-  })()
-
   if (loading) {
     return (
       <div className="text-center py-16 text-slate-400 text-base">加载中...</div>
@@ -406,9 +371,8 @@ export default function CategoryPage() {
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
-          onDragStart={handleDragStart}
+          modifiers={[restrictToVerticalAxis]}
           onDragEnd={handleDragEnd}
-          onDragCancel={handleDragCancel}
         >
           <SortableContext
             items={categories.map((c) => `cat-${c.id}`)}
@@ -548,9 +512,6 @@ export default function CategoryPage() {
               })}
             </div>
           </SortableContext>
-          <DragOverlay>
-            {dragOverlayContent}
-          </DragOverlay>
         </DndContext>
       )}
 

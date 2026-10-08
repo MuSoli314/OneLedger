@@ -46,12 +46,19 @@ export default function SortableCategoryRow({
   onToggleDefault,
   children,
 }: Props) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  // 让位动画调快一些（默认 200ms 偏拖沓），落位更利落
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    transition: { duration: 150, easing: 'cubic-bezier(0.2, 0, 0, 1)' },
+  })
 
+  // 拖拽中不改变任何外观（不加阴影、不改透明度、不换元素），只让整行跟着指针移动。
+  // zIndex 是为了让被拖的行盖住相邻行（transform 会新建层叠上下文，DOM 靠后的行会压住它）。
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.35 : undefined,
+    position: 'relative',
+    zIndex: isDragging ? 10 : undefined,
   }
 
   const defaultCount = cat.children.filter((c) => c.is_default).length

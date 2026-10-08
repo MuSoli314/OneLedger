@@ -553,20 +553,32 @@ export async function updateSubCategoryDefaults(id: number, defaults: { default_
   await database.execute(`UPDATE subcategories SET ${sets.join(', ')} WHERE id=$${idx}`, vals)
 }
 
+// 拼一条批量重排 SQL：UPDATE t SET sort_order = CASE id WHEN $1 THEN $2 ... END WHERE id IN ($1, $3, ...)
+// 用一条语句代替 N 次串行 UPDATE，落位等待从「N 次往返」降到「1 次」
+function buildReorderSql(table: string, count: number): string {
+  const cases = Array.from({ length: count }, (_, i) => `WHEN $${i * 2 + 1} THEN $${i * 2 + 2}`).join(' ')
+  const inList = Array.from({ length: count }, (_, i) => `$${i * 2 + 1}`).join(', ')
+  return `UPDATE ${table} SET sort_order = CASE id ${cases} ELSE sort_order END WHERE id IN (${inList})`
+}
+
+function reorderParams(orderedIds: number[]): unknown[] {
+  const params: unknown[] = []
+  orderedIds.forEach((id, i) => params.push(id, i))
+  return params
+}
+
 // 拖拽后批量更新大类顺序
 export async function reorderCategories(orderedIds: number[]): Promise<void> {
+  if (orderedIds.length === 0) return
   const database = await getDb()
-  for (let i = 0; i < orderedIds.length; i++) {
-    await database.execute('UPDATE categories SET sort_order=$1 WHERE id=$2', [i, orderedIds[i]])
-  }
+  await database.execute(buildReorderSql('categories', orderedIds.length), reorderParams(orderedIds))
 }
 
 // 拖拽后批量更新小类顺序
 export async function reorderSubCategories(orderedIds: number[]): Promise<void> {
+  if (orderedIds.length === 0) return
   const database = await getDb()
-  for (let i = 0; i < orderedIds.length; i++) {
-    await database.execute('UPDATE subcategories SET sort_order=$1 WHERE id=$2', [i, orderedIds[i]])
-  }
+  await database.execute(buildReorderSql('subcategories', orderedIds.length), reorderParams(orderedIds))
 }
 
 // ========== 支付方式配置 ==========
