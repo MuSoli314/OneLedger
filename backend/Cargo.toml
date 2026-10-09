@@ -1,6 +1,6 @@
 [package]
 name = "one-ledger"
-version = "2.2.0"
+version = "2.3.0"
 description = "一笔（OneLedger）桌面记账应用 —— 个人消费记录与支出管理"
 authors = ["musoli314 <musoli314@gmail.com>"]
 license = "MIT"

@@ -5,6 +5,7 @@ import EditExpenseDialog from './EditExpenseDialog'
 import PaymentMethodTotals from './PaymentMethodTotals'
 import CategoryAddPopover from './CategoryAddPopover'
 import ExpenseCategoryGroup from './ExpenseCategoryGroup'
+import HoverTip from './HoverTip'
 import { useSettings } from '../contexts/SettingsContext'
 import { addExpense } from '../data/database'
 import { evaluateExpression } from '../data/calcUtils'
@@ -33,9 +34,80 @@ interface Props {
   hasFilter?: boolean
   /** 搜索中：强制展开所有日期分组与大类分组，让命中的记录（含备注）直接可见 */
   searchActive?: boolean
+  /** 月锁集合（YYYY-MM）：某月已锁 → 该月每天都是锁定的（含未来日期） */
+  lockedMonths?: Set<string>
+  /** 日锁集合（YYYY-MM-DD） */
+  lockedDays?: Set<string>
+  /** 点击日期行的锁按钮：锁 / 解锁当天（整月锁生效时不会触发） */
+  onToggleDayLock?: (date: string) => void
 }
 
-export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull, onRefresh, extraDates, autoExpandDates, missingDates, onAddDate, onDeleteDate, onDeleteCategory, hasFilter, searchActive }: Props) {
+/**
+ * 把一组日期切成「连续段」并算出渲染布局（未记账快捷行 / 当天无消费行共用）。
+ *
+ * 折叠规则：段长 ≤3 全部显示；段长 >3 只显示最早、最晚两天，中间折成「+ 更多（N 天）」。
+ * 展开状态存在 expandedRuns 里（key = runId）；两套段用 prefix 区分，展开状态互不影响。
+ *
+ * @param dates 倒序排列的日期（YYYY-MM-DD，与列表整体顺序一致）
+ * @param prefix runId 前缀（q = 未记账段、n = 当天无消费段）
+ * @param expandedRuns 已展开段的 runId 集合
+ * @param out.visible 需要渲染的日期集合（没进这个集合的日期不渲染）
+ * @param out.folded 折叠段：段内最早日期 → { runId, count, noSpend }
+ * @param out.expandedMin / out.expandedMax 展开段的「收起」按钮位置（段尾 / 段首各一个）
+ * @param noSpend 该批日期是否属于「当天无消费」（只影响折叠行文案）
+ */
+function collectRunLayout(
+  dates: string[],
+  prefix: string,
+  expandedRuns: Set<string>,
+  out: {
+    visible: Set<string>
+    folded: Map<string, { runId: string; count: number; noSpend: boolean }>
+    expandedMin: Map<string, { runId: string }>
+    expandedMax: Map<string, { runId: string }>
+  },
+  noSpend = false,
+) {
+  // 按「相邻差 1 天」切段
+  const runs: string[][] = []
+  for (const d of dates) {
+    const last = runs[runs.length - 1]
+    if (!last) {
+      runs.push([d])
+      continue
+    }
+    const gap = Math.abs(new Date(`${last[last.length - 1]}T00:00:00`).getTime() - new Date(`${d}T00:00:00`).getTime())
+    if (gap === 86400000) last.push(d)
+    else runs.push([d])
+  }
+  // 段内按时间升序；段之间按最晚日期倒序（与列表整体倒序一致）
+  runs.forEach((r) => r.sort((a, b) => a.localeCompare(b)))
+  runs.sort((a, b) => b[b.length - 1].localeCompare(a[a.length - 1]))
+
+  for (const r of runs) {
+    const min = r[0]
+    const max = r[r.length - 1]
+    if (r.length <= 3) {
+      // 段长 ≤3：全部显示，不折叠
+      for (const d of r) out.visible.add(d)
+      continue
+    }
+    const runId = `${prefix}:${min}~${max}`
+    if (expandedRuns.has(runId)) {
+      // 已展开：全部显示，两端各放一个「收起」
+      for (const d of r) out.visible.add(d)
+      out.expandedMin.set(min, { runId })
+      out.expandedMax.set(max, { runId })
+    } else {
+      // 折叠：只显示两端，中间折成「+ 更多（N 天）」
+      out.visible.add(min)
+      out.visible.add(max)
+      out.folded.set(min, { runId, count: r.length - 2, noSpend })
+    }
+  }
+}
+
+export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull, onRefresh, extraDates, autoExpandDates, missingDates, onAddDate, onDeleteDate, onDeleteCategory, hasFilter, searchActive, lockedMonths, lockedDays, onToggleDayLock }: Props) {
   const { categories, addSubCategory, addCategory } = useCategories()
   const { paymentMethods, txTypes, defaultExpenseCode } = useSettings()
   const [collapsedMap, setCollapsedMap] = useState<Set<string>>(new Set())
@@ -128,6 +200,10 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
 
   // 类型 code → 配置 查找表（含未定义的兜底）
   const txTypeByCode = new Map(txTypes.map((t) => [t.code, t]))
+
+  // 某天是否锁定 = 月已锁 或 该天已锁；某天是否被整月锁覆盖（决定日期行锁按钮是否置灰）
+  const isDateLocked = (date: string) => !!lockedMonths?.has(date.slice(0, 7)) || !!lockedDays?.has(date)
+  const isMonthLockedFor = (date: string) => !!lockedMonths?.has(date.slice(0, 7))
 
   // 更新编辑表单并同步 ref（下拉选完同帧保存需读到最新值）
   const handleEditFormChange = (form: EditForm) => {
@@ -514,66 +590,34 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
     if (!groupedByDate[d]) groupedByDate[d] = []
   }
 
-  // ===== 缺失日期快捷行 =====
+  // ===== 未记账快捷行 / 当天无消费行（两者都按连续段折叠）=====
   // 当前时间范围（近一周/近一月/本月/上月/历史月份/自定义）下缺失记录的日期：全部缺失日期都补快捷入口。
-  // 按连续（差 1 天）分段：段长 ≤3 天全部显示；段长 >3 天只显示两端，中间折叠成「+ 更多（N 天）」。
   // 已有日期集合 = 真实记录 + 本地临时行 + 手动添加的空白日期（groupedByDate 的所有键）
   const presentSet = new Set(Object.keys(groupedByDate))
-  // 缺失日期里，排除已是空白日期（extraDates 已单独渲染成日期分组）的，避免重复
+  // 1) 未记账日期（未锁定、无记录）→ 「+ 添加」快捷行；缺失日期里排除已是空白日期的，避免重复
   const missingList = (missingDates || [])
     .filter((d) => !presentSet.has(d))
     .sort((a, b) => b.localeCompare(a)) // 倒序（列表日期整体倒序）
-  // 把缺失日期切成连续段：runs[i] = 该段按时间升序排列的日期数组
-  const runs: string[][] = []
-  for (const d of missingList) {
-    if (runs.length === 0) {
-      runs.push([d])
-    } else {
-      const last = runs[runs.length - 1]
-      const gap = Math.abs(new Date(`${last[last.length - 1]}T00:00:00`).getTime() - new Date(`${d}T00:00:00`).getTime())
-      if (gap === 86400000) {
-        // d 与当前段尾部正好差 1 天，继续当前段
-        last.push(d)
-      } else {
-        runs.push([d])
-      }
-    }
-  }
-  // 段内升序 → 每段内部按时间升序排列；但段本身按「段的起点日期」降序排列（与列表倒序一致）
-  runs.forEach((r) => r.sort((a, b) => a.localeCompare(b)))
-  runs.sort((a, b) => b[b.length - 1].localeCompare(a[a.length - 1]))
-  // 每段折叠时只显示两端（max = 段内最大日期、min = 段内最小日期）；展开时显示全部
-  // runId 用于标识段的展开状态
-  const runEnds: { id: string, min: string, max: string, dates: string[], expanded: boolean }[] = []
-  for (const r of runs) {
-    if (r.length <= 3) {
-      // 段长 ≤ 3：全部显示（无需折叠）
-      runEnds.push({ id: r[0], min: r[0], max: r[r.length - 1], dates: r, expanded: true })
-    } else {
-      // 段长 > 3：只显示两端，中间折叠成「+ 更多」
-      const runId = `${r[0]}~${r[r.length - 1]}`
-      runEnds.push({ id: runId, min: r[0], max: r[r.length - 1], dates: r, expanded: expandedRuns.has(runId) })
-    }
-  }
+  // 2) 当天无消费（已锁定 + 无记录）→ 单行只读行，不再展开出大白块
+  const noSpendList = (extraDates || [])
+    .filter((d) => (groupedByDate[d]?.length ?? 0) === 0 && isDateLocked(d))
+    .sort((a, b) => b.localeCompare(a))
+
   const quickDates = new Set<string>()
-  // 折叠段：min 日期 → 该段「+ 更多（N 天）」信息；展开段：min/max 日期 → 该段「收起」信息
-  // （展开段在段首（max，最晚日期）和段尾（min，最早日期）各放一个「收起」，
-  //   避免展开后只能滚到最底部才能折叠回去）
-  const foldedRuns = new Map<string, { runId: string; count: number }>()
+  // 折叠段：最早日期 → 该段「+ 更多（N 天）」信息；展开段：最早/最晚日期 → 该段「收起」信息
+  const foldedRuns = new Map<string, { runId: string; count: number; noSpend: boolean }>()
   const expandedRunMins = new Map<string, { runId: string }>()
   const expandedRunMaxs = new Map<string, { runId: string }>()
-  for (const r of runEnds) {
-    if (r.expanded) {
-      for (const d of r.dates) quickDates.add(d)
-      if (r.dates.length > 3) {
-        expandedRunMins.set(r.min, { runId: r.id })
-        expandedRunMaxs.set(r.max, { runId: r.id })
-      }
-    } else {
-      quickDates.add(r.min)
-      quickDates.add(r.max)
-      if (r.dates.length > 3) foldedRuns.set(r.min, { runId: r.id, count: r.dates.length - 2 })
-    }
+  collectRunLayout(missingList, 'q', expandedRuns, {
+    visible: quickDates, folded: foldedRuns, expandedMin: expandedRunMins, expandedMax: expandedRunMaxs,
+  })
+  // 无消费段同样折叠：被折进「+ 更多」里的日期要从渲染集合里剔除（extraDates 默认全部参与渲染）
+  const noSpendVisible = new Set<string>()
+  collectRunLayout(noSpendList, 'n', expandedRuns, {
+    visible: noSpendVisible, folded: foldedRuns, expandedMin: expandedRunMins, expandedMax: expandedRunMaxs,
+  }, true)
+  for (const d of noSpendList) {
+    if (!noSpendVisible.has(d)) delete groupedByDate[d]
   }
   // 只把要显示的快捷日期并入分组，参与倒序排序与渲染；其余（被折叠的中间日期）不渲染
   for (const d of quickDates) {
@@ -587,6 +631,9 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
         .sort(([a], [b]) => b.localeCompare(a))
         .map(([date, items]) => {
         const isQuickRow = quickDates.has(date)
+        // 该日期是否锁定（月锁 或 日锁）；锁定后完全只读（锁住的空白天就是「当天无消费」）
+        const locked = isDateLocked(date)
+        const monthLocked = isMonthLockedFor(date)
         // 每日小计只统计「计入支出」的记录（与蓝色卡/右栏统计口径一致；收入、不计类型不参与）
         const dayTotal = items.reduce((sum, e) => sum + (txTypeByCode.get(e.type)?.category === 'expense' ? e.amount : 0), 0)
 
@@ -598,70 +645,102 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
         }
 
         const existingL1s = new Set(Object.keys(groupedByL1))
+        // 当天无消费：已锁定 + 一条记录都没有 → 只渲染一行只读行，不再展开出大白块
+        const noSpend = !isQuickRow && items.length === 0 && locked
 
         return (
           <div key={date}>
-            {/* 缺失日期：只显示快捷行（「+ 添加」；折叠段还配「+ 更多（N 天）」/「收起」），不显示日期标题 */}
-            {isQuickRow && (
-              <div className="space-y-1.5">
-                {/* 展开段的最晚日期前：「收起」，点击折叠回「+ 更多（N 天）」（段首也放一个，展开后不用滚到底即可折回） */}
-                {expandedRunMaxs.has(date) && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); toggleRunCollapse(expandedRunMaxs.get(date)!.runId) }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 rounded-xl border border-dashed border-slate-300 text-slate-400 hover:bg-slate-50 transition-colors text-sm"
-                    title="折叠中间日期"
-                  >
-                    <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                    </svg>
-                    <span>收起</span>
-                  </button>
-                )}
-                {/* 折叠段的最早日期前：该段折叠为「+ 更多（N 天）」，点击展开中间所有日期 */}
-                {foldedRuns.has(date) && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); toggleRunCollapse(foldedRuns.get(date)!.runId) }}
-                    className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 transition-colors text-sm"
-                    title="展开中间所有日期"
-                  >
-                    <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                    <span>+ 更多（{foldedRuns.get(date)!.count} 天）</span>
-                  </button>
-                )}
+            {/* 「收起 / + 更多」按钮与行主体贴在一起（space-y-1.5）*/}
+            <div className="space-y-1.5">
+              {/* 展开段的最晚日期前：「收起」，点击折叠回「+ 更多（N 天）」（段首也放一个，展开后不用滚到底即可折回） */}
+              {expandedRunMaxs.has(date) && (
                 <button
-                  onClick={(e) => { e.stopPropagation(); onAddDate?.(date) }}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-dashed border-primary/40 text-primary hover:bg-primary/5 transition-colors text-sm"
-                  title="添加此日期"
+                  onClick={(e) => { e.stopPropagation(); toggleRunCollapse(expandedRunMaxs.get(date)!.runId) }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 rounded-xl border border-dashed border-slate-300 text-slate-400 hover:bg-slate-50 transition-colors text-sm"
+                  title="折叠中间日期"
                 >
                   <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
                   </svg>
-                  <span>添加 {formatDate(date)}</span>
+                  <span>收起</span>
                 </button>
-                {/* 展开段的最早日期下：「收起」，点击折叠回「+ 更多（N 天）」 */}
-                {expandedRunMins.has(date) && (
+              )}
+              {/* 折叠段的最早日期前：该段折叠为「+ 更多（N 天）」，点击展开中间所有日期 */}
+              {foldedRuns.has(date) && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); toggleRunCollapse(foldedRuns.get(date)!.runId) }}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-xl border border-dashed border-slate-300 text-slate-500 hover:bg-slate-50 transition-colors text-sm"
+                  title="展开中间所有日期"
+                >
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                  <span>+ 更多（{foldedRuns.get(date)!.count} 天{foldedRuns.get(date)!.noSpend ? '无消费' : ''}）</span>
+                </button>
+              )}
+
+              {/* 缺失日期：只显示快捷行（「+ 添加」），不显示日期标题 */}
+              {isQuickRow && (
+                <div className="flex items-center gap-1.5">
                   <button
-                    onClick={(e) => { e.stopPropagation(); toggleRunCollapse(expandedRunMins.get(date)!.runId) }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 rounded-xl border border-dashed border-slate-300 text-slate-400 hover:bg-slate-50 transition-colors text-sm"
-                    title="折叠中间日期"
+                    onClick={(e) => { e.stopPropagation(); onAddDate?.(date) }}
+                    className="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 rounded-xl border border-dashed border-primary/40 text-primary hover:bg-primary/5 transition-colors text-sm"
+                    title="添加此日期"
                   >
                     <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                     </svg>
-                    <span>收起</span>
+                    <span className="truncate">添加 {formatDate(date)}</span>
                   </button>
-                )}
-              </div>
-            )}
-            {/* 日期标题 + 每日小计 + 添加按钮 — 整行可点击展开/折叠（缺失日期不显示标题） */}
+                  {/* 锁按钮：未记录的日期没有日期标题行，在这里点一下 = 确认这天没消费（锁定后显示为「当天无消费」） */}
+                  {onToggleDayLock && (
+                    <HoverTip
+                      className="shrink-0"
+                      align="right"
+                      text={monthLocked
+                        ? '整月已锁定，请先解锁整月'
+                        : locked ? '点击解锁' : '点击锁定（视为无消费）'}
+                    >
+                      <button
+                        onClick={(e) => { e.stopPropagation(); if (!monthLocked) onToggleDayLock(date) }}
+                        disabled={monthLocked}
+                        aria-label={locked ? '解锁这一天' : '锁定这一天（视为无消费）'}
+                        className={`w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl border border-dashed transition-colors ${
+                          monthLocked
+                            ? 'border-slate-200 text-slate-300 cursor-not-allowed'
+                            : locked
+                              ? 'border-amber-300 text-amber-500 hover:bg-amber-50'
+                              : 'border-slate-300 text-slate-400 hover:bg-slate-50 hover:text-slate-600'
+                        }`}
+                      >
+                        {locked ? '🔒' : '🔓'}
+                      </button>
+                    </HoverTip>
+                  )}
+                </div>
+              )}
+              {/* 展开段的最早日期下：「收起」，点击折叠回「+ 更多（N 天）」 */}
+              {expandedRunMins.has(date) && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); toggleRunCollapse(expandedRunMins.get(date)!.runId) }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 rounded-xl border border-dashed border-slate-300 text-slate-400 hover:bg-slate-50 transition-colors text-sm"
+                  title="折叠中间日期"
+                >
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                  </svg>
+                  <span>收起</span>
+                </button>
+              )}
+            </div>
+            {/* 日期标题 + 每日小计 + 添加按钮 — 整行可点击展开/折叠（缺失日期不显示标题；当天无消费无内容可展开） */}
             {!isQuickRow && (
             <div
-              onClick={() => toggleDateCollapse(date)}
-              className="flex items-center justify-between mb-2 px-0.5 cursor-pointer"
+              onClick={noSpend ? undefined : () => toggleDateCollapse(date)}
+              className={`flex items-center justify-between mb-2 px-0.5 ${noSpend ? '' : 'cursor-pointer'}`}
             >
-              <div className="flex items-center gap-2 hover:opacity-75 transition-opacity">
+              <div className={`flex items-center gap-2 ${noSpend ? '' : 'hover:opacity-75 transition-opacity'}`}>
+                {!noSpend && (
                 <svg
                   className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-200 ${
                     expandedDates.has(date) ? '' : '-rotate-90'
@@ -670,12 +749,15 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
                 >
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
+                )}
                 <span className="text-base font-semibold text-slate-700">
                   {formatDate(date)}
                 </span>
                 <span className="text-sm text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
                   {getWeekday(date)}
                 </span>
+                {/* 当天无消费：写在「周几」与右侧「合计」之间，一天只占这一行 */}
+                {noSpend && <span className="text-sm text-slate-400">当天无消费</span>}
               </div>
               <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                 {/* 支付方式统计（桌面版） */}
@@ -692,7 +774,40 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
                   <span className="w-[44px] text-right text-slate-400 tabular-nums">{items.length}笔</span>
                 </span>
 
-                {/* 添加大类按钮 */}
+                {/* 锁按钮：🔒 = 已锁定（点击解锁）/ 🔓 = 未锁定（点击锁定）。
+                    整月锁生效时置灰不可点（要先解锁整月才能单独解锁当天） */}
+                {onToggleDayLock && (
+                  <HoverTip
+                    className="shrink-0"
+                    align="right"
+                    text={monthLocked
+                      ? '整月已锁定，请先解锁整月'
+                      : locked
+                        ? '点击解锁'
+                        : items.length === 0
+                          ? '点击锁定（视为无消费）'
+                          : '点击锁定'}
+                  >
+                    <button
+                      onClick={(e) => { e.stopPropagation(); if (!monthLocked) onToggleDayLock(date) }}
+                      disabled={monthLocked}
+                      aria-label={locked ? '解锁这一天' : '锁定这一天'}
+                      className={`w-6 h-6 flex items-center justify-center rounded-lg transition-colors flex-shrink-0 ${
+                        monthLocked
+                          ? 'text-slate-300 cursor-not-allowed'
+                          : locked
+                            ? 'text-amber-500 hover:bg-amber-50'
+                            : 'text-slate-300 hover:bg-slate-100 hover:text-slate-500'
+                      }`}
+                    >
+                      {locked ? '🔒' : '🔓'}
+                    </button>
+                  </HoverTip>
+                )}
+
+                {/* 添加大类按钮（锁定日期完全只读，不提供入口） */}
+                {!locked && (
+                <>
                 <div className="relative" ref={addingDate === date ? addBtnRef : undefined}>
                   <button
                     onClick={(e) => { e.stopPropagation(); setAddingDate(addingDate === date ? null : date); setHoverL1(null); setCustomizingL1(null); setCustomizingCategory(false); setCustomName('') }}
@@ -725,7 +840,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
                   )}
                 </div>
 
-                {/* 删除当天按钮 */}
+                {/* 删除当天按钮（锁定日期不提供） */}
                 {onDeleteDate && items.length > 0 && (
                   <button
                     onClick={(e) => { e.stopPropagation(); onDeleteDate(date) }}
@@ -737,14 +852,18 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
                     </svg>
                   </button>
                 )}
+                </>
+                )}
               </div>
             </div>
             )}
 
-            {/* 该日记录 — 按大类分组表格（搜索中强制展开，不改变用户手动折叠状态） */}
-            {!isQuickRow && (searchActive || expandedDates.has(date)) && (
+            {/* 该日记录 — 按大类分组表格（搜索中强制展开，不改变用户手动折叠状态；
+                「当天无消费」没有内容可展开，整日只有上面那一行） */}
+            {!isQuickRow && !noSpend && (searchActive || expandedDates.has(date)) && (
             <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
               {Object.entries(groupedByL1).length === 0 ? (
+                /* 走到这里必定是「未锁定的空白日期」（锁定的空白天在上层已判定为 noSpend、整日只有一行） */
                 <div className="px-4 py-4 text-center">
                   <button
                     onClick={(e) => {
@@ -779,6 +898,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
                     isLastL1={l1Idx === l1Arr.length - 1}
                     collapsedMap={collapsedMap}
                     searchActive={searchActive}
+                    readOnly={locked}
                     categories={categories}
                     paymentMethods={paymentMethods}
                     txTypeByCode={txTypeByCode}

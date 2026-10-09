@@ -7,6 +7,7 @@ import { eachDay, localMonthString, formatMonth, getRangeDates } from '../data/d
 import { useCategories } from '../contexts/CategoryContext'
 import { DailyDualLineChart } from './TrendChart'
 import MonthCalendar from './MonthCalendar'
+import HoverTip from './HoverTip'
 import LunarCard, { type LunarHoverBridge } from './LunarCard'
 import type { DailyNonDailyPoint, DailyTrendPoint } from '../data/types'
 
@@ -21,9 +22,15 @@ interface Props {
   syncMonth: string | null
   /** 日历选月份回调：HomePage 据此把时间范围切到「历史月份」该月或「本月」 */
   onMonthChange: (month: string) => void
+  /** 月锁集合（YYYY-MM）：只看月锁属性，与日锁互不影响 */
+  lockedMonths: Set<string>
+  /** 日锁集合（YYYY-MM-DD）：日历格子按「月锁 或 日锁」显示锁图标 */
+  lockedDays: Set<string>
+  /** 点击整月锁按钮：锁 / 解锁当前视图月份（只写月属性，不动任何日属性） */
+  onToggleMonthLock: (month: string) => void
 }
 
-export default function MonthOverview({ dataVersion, startDate, endDate, title, selectedDay, onSelectDay, syncMonth, onMonthChange }: Props) {
+export default function MonthOverview({ dataVersion, startDate, endDate, title, selectedDay, onSelectDay, syncMonth, onMonthChange, lockedMonths, lockedDays, onToggleMonthLock }: Props) {
   const { categories } = useCategories()
   const [activeCategory, setActiveCategory] = useState('') // '' = 全天（只作用于右侧折线图）
   const [daily, setDaily] = useState<DailyTrendPoint[]>([])
@@ -93,7 +100,7 @@ export default function MonthOverview({ dataVersion, startDate, endDate, title, 
     onMonthChange(next)
   }
 
-  // 下拉 / 回本月：设置月份并联动时间范围选择器
+  // 下拉：设置月份并联动时间范围选择器
   const changeMonth = (next: string) => {
     setViewMonth(next)
     onMonthChange(next)
@@ -132,16 +139,26 @@ export default function MonthOverview({ dataVersion, startDate, endDate, title, 
             >
               ›
             </button>
-            {viewMonth !== thisMonth && (
-              <button
-                type="button"
-                onClick={() => changeMonth(thisMonth)}
-                className="text-[11px] text-primary hover:bg-primary/5 rounded-lg px-1.5 py-1 transition-colors"
-              >
-                回本月
-              </button>
-            )}
           </div>
+          {/* 整月锁按钮：只反映「月锁」属性；月锁生效时该月每天都是锁定的（含未来日期） */}
+          <HoverTip
+            className="shrink-0"
+            align="right"
+            text={lockedMonths.has(viewMonth) ? '点击解锁' : '点击锁定（整月只读）'}
+          >
+            <button
+              type="button"
+              onClick={() => onToggleMonthLock(viewMonth)}
+              aria-label={lockedMonths.has(viewMonth) ? '解锁整月' : '锁定整月'}
+              className={`inline-flex items-center gap-1 text-[11px] rounded-lg px-2 py-1 border transition-colors shrink-0 ${
+                lockedMonths.has(viewMonth)
+                  ? 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'
+                  : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700'
+              }`}
+            >
+              {lockedMonths.has(viewMonth) ? '🔒 解锁' : '🔓 锁定'}
+            </button>
+          </HoverTip>
         </div>
         <MonthCalendar
           month={viewMonth}
@@ -149,6 +166,8 @@ export default function MonthOverview({ dataVersion, startDate, endDate, title, 
           selectedDay={selectedDay}
           onSelectDay={onSelectDay}
           onHoverDay={handleCalendarHover}
+          lockedMonths={lockedMonths}
+          lockedDays={lockedDays}
         />
       </div>
 

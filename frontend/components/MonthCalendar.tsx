@@ -16,6 +16,10 @@ interface Props {
   onSelectDay: (day: string | null) => void
   /** 悬停某天回调（null = 鼠标移出日历区域）：右侧农历黄历面板跟随悬停显示 */
   onHoverDay?: (day: string | null) => void
+  /** 月锁集合（YYYY-MM）：月锁生效时该月每天都是锁定的 */
+  lockedMonths?: Set<string>
+  /** 日锁集合（YYYY-MM-DD） */
+  lockedDays?: Set<string>
 }
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
@@ -43,7 +47,7 @@ function extraClass(extra: DayExtra): string {
 // 固定 6 行 × 7 列 = 42 格（行数恒定，卡片高度不随月份变化）
 const TOTAL_CELLS = 42
 
-export default function MonthCalendar({ month, amountByDay, selectedDay, onSelectDay, onHoverDay }: Props) {
+export default function MonthCalendar({ month, amountByDay, selectedDay, onSelectDay, onHoverDay, lockedMonths, lockedDays }: Props) {
   const [y, m] = month.split('-').map(Number)
   const firstWeekday = new Date(y, m - 1, 1).getDay() // 0 = 周日
   const daysInMonth = new Date(y, m, 0).getDate()
@@ -84,14 +88,18 @@ export default function MonthCalendar({ month, amountByDay, selectedDay, onSelec
           const hasAmount = amount != null
           const isToday = date === today
           const isSelected = date === selectedDay
-          // 背景：有支出的日子统一浅靛蓝底（不按金额分档）；选中/今天状态叠加在浅色之上
+          // 锁定 = 月已锁 或 该天已锁；锁住且没有记录的日子 = 「当天无消费」（灰底 + 小锁）
+          const locked = !!lockedMonths?.has(month) || !!lockedDays?.has(date)
+          // 背景：有支出的日子统一浅靛蓝底（不按金额分档）；锁定的空白天灰色；选中/今天状态叠加在浅色之上
           const bgClass = hasAmount
             ? 'bg-indigo-100'
-            : isToday
-              ? 'bg-indigo-50'
-              : isSelected
-                ? 'bg-indigo-100'
-                : 'bg-slate-50'
+            : locked
+              ? 'bg-slate-200'
+              : isToday
+                ? 'bg-indigo-50'
+                : isSelected
+                  ? 'bg-indigo-100'
+                  : 'bg-slate-50'
           // 有支出的格子去掉描边（浅色块本身即信息）；选中加深色外圈高亮
           const borderClass = hasAmount
             ? 'border-transparent'
@@ -124,11 +132,23 @@ export default function MonthCalendar({ month, amountByDay, selectedDay, onSelec
               type="button"
               onClick={() => onSelectDay(isSelected ? null : date)}
               onMouseEnter={() => onHoverDay?.(date)}
-              title={amount != null ? `${date} 支出 ¥${amount.toFixed(2)}（点击查看当天记录）` : `${date} 无支出（点击可添加当天记录）`}
-              className={`flex flex-col items-center justify-center gap-0 aspect-square rounded-lg border transition-colors overflow-hidden ${bgClass} ${borderClass} ${ringClass} ${
+              title={
+                locked
+                  ? hasAmount
+                    ? `${date} 支出 ¥${amount.toFixed(2)}（已锁定，仅可查看）`
+                    : `${date} 已确认当天无消费（已锁定）`
+                  : amount != null
+                    ? `${date} 支出 ¥${amount.toFixed(2)}（点击查看当天记录）`
+                    : `${date} 无支出（点击可添加当天记录）`
+              }
+              className={`relative flex flex-col items-center justify-center gap-0 aspect-square rounded-lg border transition-colors overflow-hidden ${bgClass} ${borderClass} ${ringClass} ${
                 hasAmount ? 'hover:brightness-95' : 'hover:bg-indigo-50/60 hover:border-primary/40'
               }`}
             >
+              {/* 锁图标：右上角（月锁生效时该月每天都有） */}
+              {locked && (
+                <span className="absolute top-0 right-0.5 text-[9px] leading-none" aria-hidden>🔒</span>
+              )}
               {dayNumber}
               <span className={`text-[10px] leading-tight tabular-nums max-w-full truncate px-0.5 ${amountClass}`}>
                 {amount != null ? compactAmount(amount) : '—'}

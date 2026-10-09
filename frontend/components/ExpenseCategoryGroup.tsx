@@ -10,6 +10,8 @@ interface Props {
   isLastL1: boolean
   collapsedMap: Set<string>
   searchActive?: boolean
+  /** 只读（该日期已锁定）：隐藏删除大类 / 添加小类入口，记录行不可编辑 */
+  readOnly?: boolean
   categories: CategoryWithChildren[]
   paymentMethods: PaymentMethodConfig[]
   txTypeByCode: Map<string, TxTypeConfig>
@@ -38,6 +40,7 @@ export default function ExpenseCategoryGroup({
   isLastL1,
   collapsedMap,
   searchActive,
+  readOnly,
   categories,
   paymentMethods,
   txTypeByCode,
@@ -99,7 +102,7 @@ export default function ExpenseCategoryGroup({
         <span className="text-sm font-medium text-slate-500 tabular-nums">
           合计 ¥{l1Total.toFixed(2)}
         </span>
-        {onDeleteCategory && l1Items.length > 0 && (
+        {onDeleteCategory && l1Items.length > 0 && !readOnly && (
           <button
             onClick={(e) => { e.stopPropagation(); onDeleteCategory(date, l1) }}
             className="ml-1.5 w-6 h-6 flex items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors flex-shrink-0"
@@ -121,6 +124,7 @@ export default function ExpenseCategoryGroup({
             expense={expense}
             isEditing={editingId === expense.id}
             isLastItem={isLastItem}
+            readOnly={readOnly}
             editForm={editForm}
             focusField={focusField}
             categories={categories}
@@ -139,8 +143,8 @@ export default function ExpenseCategoryGroup({
         )
       })}
 
-      {/* 添加小类按钮（折叠时也隐藏） */}
-      {!collapsed && (
+      {/* 添加小类按钮（折叠时也隐藏；锁定日期不提供） */}
+      {!collapsed && !readOnly && (
         <button
           onClick={() => onAddSubCategory(date, l1)}
           className={`w-full flex items-center gap-2 px-4 pl-16 py-2.5 text-sm text-slate-400 hover:text-primary hover:bg-primary/5 transition-colors border-b border-slate-50 ${

@@ -9,6 +9,8 @@ interface Props {
   isEditing: boolean
   /** 是否本日期大类的最后一条（控制底部边框） */
   isLastItem: boolean
+  /** 只读（该日期已锁定）：所有格子不可点击进入编辑、不能切换日常标记，隐藏编辑/删除按钮 */
+  readOnly?: boolean
   editForm: EditForm
   focusField: EditField | null
   categories: CategoryWithChildren[]
@@ -32,6 +34,7 @@ export default function ExpenseRow({
   expense,
   isEditing,
   isLastItem,
+  readOnly,
   editForm,
   focusField,
   categories,
@@ -72,6 +75,8 @@ export default function ExpenseRow({
   }, [isEditing, focusField])
 
   const isLocal = expense.id < 0
+  // 锁定日期的行完全只读：不进入编辑、不切换日常标记、不显示编辑/删除按钮
+  const ro = !!readOnly
   const rowTx = txTypeByCode.get(expense.type)
   // 金额为 0 的记录标红提醒（非 ignore 类型；编辑态仍走 indigo 编辑样式）
   const isZeroAmount = expense.amount === 0 && rowTx?.category !== 'ignore'
@@ -87,19 +92,20 @@ export default function ExpenseRow({
         isEditing
           ? 'bg-indigo-50 border-l-2 border-l-primary'
           : isZeroAmount
-          ? 'bg-red-100 hover:bg-red-200 border-l-2 border-l-red-500 cursor-pointer group'
+          ? 'bg-red-100 hover:bg-red-200 border-l-2 border-l-red-500'
           : rowTx?.category === 'ignore'
-          ? 'bg-slate-300 hover:bg-slate-400 cursor-pointer group'
+          ? 'bg-slate-300 hover:bg-slate-400'
           : expense.is_non_daily
-          ? 'bg-slate-100/60 hover:bg-slate-100 cursor-pointer group'
-          : 'hover:bg-slate-50 cursor-pointer group'
-      } ${isLastItem && !isLocal ? '' : 'border-b border-slate-50'}`}
-      onClick={() => !isEditing && onStartEditing()}
+          ? 'bg-slate-100/60 hover:bg-slate-100'
+          : 'hover:bg-slate-50'
+      } ${ro ? 'cursor-default' : 'cursor-pointer group'} ${isLastItem && !isLocal ? '' : 'border-b border-slate-50'}`}
+      onClick={() => { if (!ro && !isEditing) onStartEditing() }}
     >
       {/* 日常/非日常徽章 */}
       <button
         onClick={(e) => {
           e.stopPropagation()
+          if (ro) return
           if (isLocal || isEditing) {
             // 新增本地行或已在编辑态：只改本地表单（新增行由行外点击/回车统一入库；编辑行由行外点击/回车统一保存）
             onEditFormChange({ ...editForm, is_non_daily: !editForm.is_non_daily })
@@ -115,8 +121,8 @@ export default function ExpenseRow({
           ((isEditing || isLocal) ? editForm.is_non_daily : expense.is_non_daily)
             ? 'bg-slate-200 text-slate-500 hover:bg-slate-300'
             : 'bg-transparent text-slate-300 border border-dashed border-slate-200 hover:border-slate-400 hover:text-slate-500'
-        }`}
-        title={isEditing || isLocal ? '切换非日常标记' : (expense.is_non_daily ? '非日常（点击改为日常）' : '日常（点击改为非日常）')}
+        } ${ro ? 'cursor-default' : ''}`}
+        title={ro ? '已锁定，不可修改' : isEditing || isLocal ? '切换非日常标记' : (expense.is_non_daily ? '非日常（点击改为日常）' : '日常（点击改为非日常）')}
       >
         {((isEditing || isLocal) ? editForm.is_non_daily : expense.is_non_daily) ? '非日常' : '日常'}
       </button>
@@ -155,7 +161,7 @@ export default function ExpenseRow({
       ) : (
         <div
           className="w-[110px] min-w-0 flex-shrink-0 text-right"
-          onClick={(e) => { e.stopPropagation(); onStartEditing('category_l2') }}
+          onClick={(e) => { e.stopPropagation(); if (!ro) onStartEditing('category_l2') }}
         >
           <span className={`text-sm font-medium ${expense.category_l2 ? 'text-slate-700' : 'text-slate-300 italic'}`}>
             {expense.category_l2 || '未设置'}
@@ -185,7 +191,7 @@ export default function ExpenseRow({
             className={`text-sm font-semibold tabular-nums w-[100px] text-right ${
               rowTx?.category === 'income' ? 'text-emerald-500' : rowTx?.category === 'ignore' ? 'text-slate-400' : 'text-expense'
             }`}
-            onClick={(e) => { e.stopPropagation(); onStartEditing('amount') }}
+            onClick={(e) => { e.stopPropagation(); if (!ro) onStartEditing('amount') }}
           >
             {rowTx?.category === 'income' ? '+' : rowTx?.category === 'ignore' ? '' : '-'}¥{expense.amount.toFixed(2)}
           </span>
@@ -214,7 +220,7 @@ export default function ExpenseRow({
         expense.payment_method ? (
           <div
             className="w-[90px] flex-shrink-0 flex justify-end"
-            onClick={(e) => { e.stopPropagation(); onStartEditing('payment_method') }}
+            onClick={(e) => { e.stopPropagation(); if (!ro) onStartEditing('payment_method') }}
           >
             <span className="inline-flex items-center gap-1 text-sm text-slate-400 bg-slate-100 px-2 py-1 rounded-full whitespace-nowrap">
               {paymentMethods.find((pm) => pm.name === expense.payment_method)?.icon || ''}
@@ -224,7 +230,7 @@ export default function ExpenseRow({
         ) : (
           <div
             className="w-[90px] flex-shrink-0"
-            onClick={(e) => { e.stopPropagation(); onStartEditing('payment_method') }}
+            onClick={(e) => { e.stopPropagation(); if (!ro) onStartEditing('payment_method') }}
           />
         )
       )}
@@ -249,7 +255,7 @@ export default function ExpenseRow({
       ) : (
         <div
           className="w-[80px] flex-shrink-0 flex justify-end"
-          onClick={(e) => { e.stopPropagation(); onStartEditing('type') }}
+          onClick={(e) => { e.stopPropagation(); if (!ro) onStartEditing('type') }}
         >
           <span className={`inline-flex items-center gap-1 text-sm px-2 py-1 rounded-full whitespace-nowrap ${
             !rowTx ? 'text-slate-500 bg-slate-200'
@@ -279,7 +285,7 @@ export default function ExpenseRow({
       ) : (
         <div
           className="flex-1 min-w-0"
-          onClick={(e) => { e.stopPropagation(); onStartEditing('note') }}
+          onClick={(e) => { e.stopPropagation(); if (!ro) onStartEditing('note') }}
         >
           <span className="text-sm text-slate-400 truncate block">
             {expense.note || '-'}
@@ -287,8 +293,8 @@ export default function ExpenseRow({
         </div>
       )}
 
-      {/* 编辑按钮（完整信息弹窗，可改日期；本地未入库的临时行不显示） */}
-      {!isLocal && (
+      {/* 编辑按钮（完整信息弹窗，可改日期；本地未入库的临时行 / 锁定的日期不显示） */}
+      {!isLocal && !ro && (
         <button
           onClick={(e) => { e.stopPropagation(); onOpenEditDialog(expense) }}
           className={`w-7 h-7 flex items-center justify-center rounded-lg transition-colors flex-shrink-0 ${
@@ -304,7 +310,8 @@ export default function ExpenseRow({
         </button>
       )}
 
-      {/* 删除按钮 */}
+      {/* 删除按钮（锁定日期不显示） */}
+      {!ro && (
       <button
         onClick={(e) => { e.stopPropagation(); onDelete(expense) }}
         className={`w-7 h-7 flex items-center justify-center rounded-lg transition-colors flex-shrink-0 ${
@@ -318,6 +325,7 @@ export default function ExpenseRow({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
         </svg>
       </button>
+      )}
     </div>
   )
 }

@@ -83,6 +83,7 @@ frontend/
 │   ├── DateRangePicker.tsx    #   日期区间选择
 │   ├── InlineSelect.tsx       #   行内自绘下拉（portal，WebView 兼容）
 │   ├── EmojiPicker.tsx        #   emoji 选择器
+│   ├── HoverTip.tsx           #   即时悬浮提示气泡（CSS 自绘，替代有延迟的原生 title）
 │   └── ConfirmDialog.tsx      #   确认弹窗
 └── pages/                 # 「路由页」：一页一文件，命名一律 XxxPage.tsx
     ├── HomePage.tsx           #   记账页（/）
@@ -171,6 +172,8 @@ CategoryContext / SettingsContext（缓存树形数据，操作后自动 refresh
 | `budgets` | `id, month(UNIQUE), amount` | 月度预算 |
 | `payment_methods` | `id, name(UNIQUE), icon, sort_order` | 支付方式配置 |
 | `tx_types` | `id, code(UNIQUE), name, icon, category(expense/income/ignore), sort_order` | 收支类型配置 |
+| `month_attributes` | `month(PRIMARY KEY), is_locked` | 月份属性表（一月一行，当前仅有锁属性）；月锁生效时该月每天只读 |
+| `day_attributes` | `date(PRIMARY KEY), is_locked` | 日期属性表（一天一行，当前仅有锁属性）；解锁只置 0 保留行 |
 
 - 建表用 `CREATE TABLE IF NOT EXISTS` + 兼容性 `ALTER TABLE`，**幂等**，旧库自动补列。
 - 迁移用 SQLite `PRAGMA user_version` 做一次性回填（如默认小类预设）。
@@ -194,6 +197,14 @@ CategoryContext / SettingsContext（缓存树形数据，操作后自动 refresh
    - **不用 `<DragOverlay>`**：dnd-kit 在 `useDragOverlay` 为 false 时会自动让被拖节点本身跟随指针（`shouldDisplaceDragSource`），且此时不施加过渡，跟手不延迟；拖拽中的行与静止时样式完全一致。
    - **上下文必须乐观更新**：`reorderXxx` 先同步 `setState` 重排（`data/reorderUtils.ts` 的 `applyOrder`），再后台落库。否则 dnd-kit 的落位动画（松手瞬间现测被拖节点位置为终点）会朝旧位置飞，即「回影」。
    - 注意：卡片容器**不要加 `overflow-hidden`**，否则会把拖到容器外的小类行裁掉（`SortableCategoryRow` 已因此去掉）。
+9. **日期锁（月锁 / 日锁）**：`database.ts` 连接时把 `is_locked=1` 的月份/日期读进内存缓存 `lockedMonths` / `lockedDays`，
+   导出同步判断 `isDateLocked(date)`（= 月锁 ∥ 日锁）与 `isMonthLocked(month)`；五个写记录的导出函数
+   （`addExpense / updateExpense / deleteExpense / deleteExpensesByDate / deleteExpensesByCategory`）开头一律
+   `assertDateEditable(date)`（改记录时新旧日期都要过），UI 藏按钮只是第二道防线。两个锁属性**互不修改**，
+   解锁只把 `is_locked` 置 0、保留行。唯一例外：`updatePaymentMethodName` 的批量改名会写到锁定日期的记录（属元数据改名，非内容修改）。
+10. **悬浮提示**：新增提示一律用 `components/HoverTip.tsx`（CSS 自绘，移入即显、移出即隐），不要再用原生 `title`
+   （Tauri WebView 里要等约 1 秒、有时不弹）。贴近容器右边缘的元素传 `align="right"`，并给包裹层加 `shrink-0`。
+   历史遗留的原生 `title` 仍散落在日历格子、记录行徽章、分类/设置页图标按钮等处（约 40 处），尚未迁移，逐步替换。
 
 ---
 

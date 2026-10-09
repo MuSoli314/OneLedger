@@ -11,6 +11,30 @@ export const catKey = (l1: string, l2: string) => `${l1}${CAT_KEY_SEP}${l2}`
 let db: DbConnection | null = null
 let dbInit: Promise<DbConnection> | null = null
 
+// ===== 日期 / 月份属性内存缓存 =====
+// 属性表：一天/一月一行，is_locked 只是当前唯一的属性字段（将来加字段不用再建表）。
+// 生效规则：某天锁定 = 月已锁 或 该天已锁（月锁优先级高，但两个属性互不修改）。
+let lockedMonths = new Set<string>()
+let lockedDays = new Set<string>()
+
+/** 同步查询某天是否处于锁定状态（月锁 或 日锁，任一成立即锁定） */
+export function isDateLocked(date: string): boolean {
+  if (!date) return false
+  return lockedMonths.has(date.slice(0, 7)) || lockedDays.has(date)
+}
+
+/** 同步查询某个月是否被整月锁定 */
+export function isMonthLocked(month: string): boolean {
+  return lockedMonths.has(month)
+}
+
+/** 写操作前的统一拦截：锁定状态下不允许新增/修改/删除 */
+function assertDateEditable(date: string) {
+  if (isDateLocked(date)) {
+    throw new Error(`${date} 已锁定，请先解锁后再修改`)
+  }
+}
+
 async function getDb(): Promise<DbConnection> {
   if (db) return db
   if (!dbInit) {
@@ -142,6 +166,24 @@ async function connectDb(retries = 2): Promise<DbConnection> {
         'CREATE TABLE IF NOT EXISTS tx_types (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, icon TEXT NOT NULL DEFAULT "💰", category TEXT NOT NULL DEFAULT "expense", sort_order INTEGER NOT NULL DEFAULT 0)'
       )
 
+      // 日期属性表 / 月份属性表：一天（一月）一行，当前只有 is_locked 一个属性字段。
+      // 属性表结构便于将来扩展（例如备注、颜色、归档标记等），不必再新建表。
+      await conn.execute(
+        'CREATE TABLE IF NOT EXISTS day_attributes (date TEXT PRIMARY KEY, is_locked INTEGER NOT NULL DEFAULT 0)'
+      )
+      await conn.execute(
+        'CREATE TABLE IF NOT EXISTS month_attributes (month TEXT PRIMARY KEY, is_locked INTEGER NOT NULL DEFAULT 0)'
+      )
+      // 锁状态读进内存缓存（写操作靠它做同步拦截）
+      const lockMonthRows = await conn.select<{ month: string }[]>(
+        'SELECT month FROM month_attributes WHERE is_locked=1'
+      )
+      const lockDayRows = await conn.select<{ date: string }[]>(
+        'SELECT date FROM day_attributes WHERE is_locked=1'
+      )
+      lockedMonths = new Set(lockMonthRows.map((r) => r.month))
+      lockedDays = new Set(lockDayRows.map((r) => r.date))
+
       // 播种默认支付方式
       const pmCount = await conn.select<{ cnt: number }[]>('SELECT COUNT(*) as cnt FROM payment_methods')
       if (pmCount[0]?.cnt === 0) {
@@ -179,9 +221,10 @@ async function connectDb(retries = 2): Promise<DbConnection> {
   throw new Error('数据库连接失败')
 }
 
-// 添加一条消费记录
+// 添加一条消费记录（锁定日期不允许新增）
 export async function addExpense(input: ExpenseInput): Promise<number> {
   const database = await getDb()
+  assertDateEditable(input.date)
   const result = await database.execute(
     'INSERT INTO expenses (amount, category_l1, category_l2, date, note, payment_method, type, is_non_daily) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)',
     [input.amount, input.category_l1, input.category_l2, input.date, input.note, input.payment_method || '', input.type || 'expense', input.is_non_daily ? 1 : 0]
@@ -189,30 +232,39 @@ export async function addExpense(input: ExpenseInput): Promise<number> {
   return result.lastInsertId as number
 }
 
-// 更新一条消费记录
+// 更新一条消费记录（原日期或新日期任一被锁都不允许）
 export async function updateExpense(id: number, input: ExpenseInput): Promise<void> {
   const database = await getDb()
+  const rows = await database.select<{ date: string }[]>('SELECT date FROM expenses WHERE id=$1', [id])
+  const oldDate = rows[0]?.date
+  if (oldDate) assertDateEditable(oldDate)
+  assertDateEditable(input.date)
   await database.execute(
     'UPDATE expenses SET amount=$1, category_l1=$2, category_l2=$3, date=$4, note=$5, payment_method=$6, type=$7, is_non_daily=$8 WHERE id=$9',
     [input.amount, input.category_l1, input.category_l2, input.date, input.note, input.payment_method || '', input.type || 'expense', input.is_non_daily ? 1 : 0, id]
   )
 }
 
-// 删除一条消费记录
+// 删除一条消费记录（锁定日期不允许删除）
 export async function deleteExpense(id: number): Promise<void> {
   const database = await getDb()
+  const rows = await database.select<{ date: string }[]>('SELECT date FROM expenses WHERE id=$1', [id])
+  const date = rows[0]?.date
+  if (date) assertDateEditable(date)
   await database.execute('DELETE FROM expenses WHERE id=$1', [id])
 }
 
-// 删除某一天的所有消费记录
+// 删除某一天的所有消费记录（锁定日期不允许删除）
 export async function deleteExpensesByDate(date: string): Promise<void> {
   const database = await getDb()
+  assertDateEditable(date)
   await database.execute('DELETE FROM expenses WHERE date=$1', [date])
 }
 
-// 删除某一天某个大类的所有消费记录
+// 删除某一天某个大类的所有消费记录（锁定日期不允许删除）
 export async function deleteExpensesByCategory(date: string, category_l1: string): Promise<void> {
   const database = await getDb()
+  assertDateEditable(date)
   await database.execute('DELETE FROM expenses WHERE date=$1 AND category_l1=$2', [date, category_l1])
 }
 
@@ -404,6 +456,50 @@ export async function setBudget(month: string, amount: number): Promise<void> {
 export async function deleteBudget(month: string): Promise<void> {
   const database = await getDb()
   await database.execute('DELETE FROM budgets WHERE month=$1', [month])
+}
+
+// ========== 日期 / 月份属性（当前只有「锁」一个字段） ==========
+
+/** 读取全部锁状态（月锁 + 日锁），供界面渲染 */
+export async function listLocks(): Promise<{ months: string[]; days: string[] }> {
+  await getDb() // 确保连接已建立、缓存已加载
+  return { months: [...lockedMonths], days: [...lockedDays] }
+}
+
+/**
+ * 设置 / 取消月锁。
+ * ⚠️ 只写月属性，不会去改任何一天的日属性 —— 两个属性互不修改。
+ * 解锁只把 is_locked 置 0（保留该行，将来它可能挂着别的属性）。
+ */
+export async function setMonthLocked(month: string, locked: boolean): Promise<void> {
+  const database = await getDb()
+  const existing = await database.select<{ month: string }[]>(
+    'SELECT month FROM month_attributes WHERE month=$1 LIMIT 1',
+    [month]
+  )
+  if (existing.length > 0) {
+    await database.execute('UPDATE month_attributes SET is_locked=$1 WHERE month=$2', [locked ? 1 : 0, month])
+  } else {
+    await database.execute('INSERT INTO month_attributes (month, is_locked) VALUES ($1, $2)', [month, locked ? 1 : 0])
+  }
+  if (locked) lockedMonths.add(month)
+  else lockedMonths.delete(month)
+}
+
+/** 设置 / 取消某天的日锁（月属性不受影响；解锁同样只置 0 保留行） */
+export async function setDayLocked(date: string, locked: boolean): Promise<void> {
+  const database = await getDb()
+  const existing = await database.select<{ date: string }[]>(
+    'SELECT date FROM day_attributes WHERE date=$1 LIMIT 1',
+    [date]
+  )
+  if (existing.length > 0) {
+    await database.execute('UPDATE day_attributes SET is_locked=$1 WHERE date=$2', [locked ? 1 : 0, date])
+  } else {
+    await database.execute('INSERT INTO day_attributes (date, is_locked) VALUES ($1, $2)', [date, locked ? 1 : 0])
+  }
+  if (locked) lockedDays.add(date)
+  else lockedDays.delete(date)
 }
 
 // ========== 数据导出 ==========

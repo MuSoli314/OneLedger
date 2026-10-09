@@ -19,6 +19,9 @@ import {
   expensesToCSV,
   addExpense,
   catKey,
+  listLocks,
+  setMonthLocked,
+  setDayLocked,
 } from '../data/database'
 import { localDateString, localMonthString, formatMonth, getRangeDates, eachDay } from '../data/dateUtils'
 import { useSettings } from '../contexts/SettingsContext'
@@ -73,6 +76,9 @@ export default function HomePage() {
   const [addedDates, setAddedDates] = useState<string[]>([])
   // 需要主动展开的日期（快捷添加日期 / 点击日历某天后，列表里该天的记录自动展开）
   const [autoExpandDates, setAutoExpandDates] = useState<string[]>([])
+  // ===== 日期锁（月锁 / 日锁两个独立属性，互不修改）=====
+  const [lockedMonths, setLockedMonths] = useState<Set<string>>(new Set())
+  const [lockedDays, setLockedDays] = useState<Set<string>>(new Set())
   // 列表搜索关键字（匹配金额 / 备注，子串匹配不区分大小写）
   const [searchQuery, setSearchQuery] = useState('')
   const searchActive = searchQuery.trim() !== ''
@@ -129,15 +135,18 @@ export default function HomePage() {
     }
   }
 
-  // 加载列表（按时间范围筛选）+ 历史月份下拉数据
+  // 加载列表（按时间范围筛选）+ 历史月份下拉数据 + 锁状态
   const loadData = useCallback(async () => {
     try {
-      const [data, m] = await Promise.all([
+      const [data, m, locks] = await Promise.all([
         listExpenses({ startDate: range.start, endDate: range.end }),
         getMonths(),
+        listLocks(),
       ])
       setExpenses(data)
       setMonths(m)
+      setLockedMonths(new Set(locks.months))
+      setLockedDays(new Set(locks.days))
       // 数据已刷新：自增版本号，通知日历区 / 右栏统计面板重新查库
       setDataVersion((v) => v + 1)
     } catch (err) {
@@ -146,6 +155,17 @@ export default function HomePage() {
       setLoading(false)
     }
   }, [range])
+
+  // 某天是否锁定 = 月已锁 或 该天已锁（只要一个成立就是锁的）
+  const isDayLocked = useCallback(
+    (date: string) => lockedMonths.has(date.slice(0, 7)) || lockedDays.has(date),
+    [lockedMonths, lockedDays]
+  )
+  // 某天是否被「整月锁」覆盖：整月锁生效时，日期行的锁按钮置灰，必须先解锁整月
+  const isMonthLockedForDate = useCallback(
+    (date: string) => lockedMonths.has(date.slice(0, 7)),
+    [lockedMonths]
+  )
 
   // 预算（近一周/近一月不显示预算，置空）
   const refreshBudget = useCallback(() => {
@@ -176,8 +196,60 @@ export default function HomePage() {
     if (hasAnyFilter) return []
     const existing = new Set(expenses.map((e) => e.date))
     const allDates = eachDay(range.start, range.end)
-    return allDates.filter((d) => !existing.has(d))
-  }, [range, hasAnyFilter, expenses])
+    // 已锁定的空白天不算「未记录」（走下面的「当天无消费」）
+    return allDates.filter((d) => !existing.has(d) && !isDayLocked(d))
+  }, [range, hasAnyFilter, expenses, isDayLocked])
+
+  // 锁住的空白天 = 当天无消费（始终显示，不受「快捷添加」开关控制；筛选/搜索时隐藏以聚焦结果）
+  const noSpendDates = useMemo(() => {
+    if (hasAnyFilter) return []
+    const existing = new Set(expenses.map((e) => e.date))
+    return eachDay(range.start, range.end).filter((d) => !existing.has(d) && isDayLocked(d))
+  }, [range, hasAnyFilter, expenses, isDayLocked])
+
+  // 列表里的「纯日期分组」= 手动添加的空白日期 + 锁住的空白天（当天无消费）。
+  // 必须 memo：ExpenseList 内部用 extraDates 的引用做「自动展开」effect，每次渲染都给新数组会死循环。
+  const extraDatesForList = useMemo(
+    () => (hasAnyFilter ? [] : [...new Set([...addedDates, ...noSpendDates])]),
+    [hasAnyFilter, addedDates, noSpendDates]
+  )
+
+  // 逐天锁 / 解锁：整月锁生效时不允许（必须先解锁整月）
+  const handleToggleDayLock = async (date: string) => {
+    if (isMonthLockedForDate(date)) return
+    const next = !lockedDays.has(date)
+    try {
+      await setDayLocked(date, next)
+      setLockedDays((prev) => {
+        const s = new Set(prev)
+        if (next) s.add(date)
+        else s.delete(date)
+        return s
+      })
+    } catch (err) {
+      alert('操作失败：' + String(err))
+    }
+  }
+
+  /**
+   * 整月锁 / 解锁（点一下就生效，不弹确认框 —— 锁错了再点一下解锁即可，数据可逆、无风险）。
+   * ⚠️ 只写月锁属性，不会去改任何一天的日锁（两个属性互不修改）；
+   * 解锁整月也只清月锁，之前单独锁过的天仍然锁着。
+   */
+  const handleToggleMonthLock = async (month: string) => {
+    try {
+      const next = !lockedMonths.has(month)
+      await setMonthLocked(month, next)
+      setLockedMonths((prev) => {
+        const s = new Set(prev)
+        if (next) s.add(month)
+        else s.delete(month)
+        return s
+      })
+    } catch (err) {
+      alert('操作失败：' + String(err))
+    }
+  }
 
   // 快捷按钮要添加的日期 = 列表里所有日期（真实记录 + 手动添加的空白日期）的最大值 + 1 天。
   // 只在「本月」显示，且最大日期还没到这个月最后一天时才展示（可提前添加未来日期做计划；
@@ -292,6 +364,11 @@ export default function HomePage() {
   // 保存某一天：只处理勾选了「默认」的大类，其下默认小类自动存成记录；
   // 没有默认小类的大类只加空白日期。右下角弹窗的「添加」和顶部快捷按钮共用此函数。
   const saveNewDate = async (date: string) => {
+    // 锁定的日期完全只读：必须先解锁才能记账
+    if (isDayLocked(date)) {
+      alert(`${date} 已锁定，请先解锁后再记账`)
+      return
+    }
     let savedAny = false
     for (const cat of categories) {
       // 未勾选默认的大类不参与「添加某天」自动记账
@@ -492,6 +569,9 @@ export default function HomePage() {
         onSelectDay={handleSelectDay}
         syncMonth={syncMonth}
         onMonthChange={handleCalendarMonthChange}
+        lockedMonths={lockedMonths}
+        lockedDays={lockedDays}
+        onToggleMonthLock={handleToggleMonthLock}
       />
 
       {/* 左右两栏：左栏（蓝色概览卡 + 记账列表）占 3/5，右栏（分类排行）占 2/5 */}
@@ -802,6 +882,7 @@ export default function HomePage() {
                   {/* 悬浮说明气泡：点击开关切换显示/隐藏，下方两行说明功能与显示条件（w-max + nowrap 保证每行完整单行展示） */}
                   <div className="pointer-events-none absolute right-0 top-full mt-2 z-30 hidden group-hover:block w-max whitespace-nowrap bg-slate-800/95 text-white text-xs leading-relaxed rounded-lg px-3 py-2.5 shadow-lg">
                     <div>为当前时间范围内没有记录的日期补「+添加」快捷行。</div>
+                    <div className="mt-1.5">已锁定（确认）的空白天会显示为「当天无消费」，始终可见。</div>
                     <div className="mt-1.5">开启支付方式/日常/分类筛选或搜索时无效。</div>
                   </div>
                 </div>
@@ -812,7 +893,7 @@ export default function HomePage() {
                 onUpdate={handleUpdate}
                 onUpdateFull={handleUpdateFull}
                 onRefresh={loadData}
-                extraDates={searchActive ? [] : addedDates}
+                extraDates={extraDatesForList}
                 autoExpandDates={autoExpandDates}
                 missingDates={showQuickAdd ? missingDates : []}
                 onAddDate={saveNewDate}
@@ -820,6 +901,9 @@ export default function HomePage() {
                 onDeleteCategory={handleDeleteCategory}
                 hasFilter={!!paymentFilter || !!dailyFilter || hasCategoryFilter || searchActive}
                 searchActive={searchActive}
+                lockedMonths={lockedMonths}
+                lockedDays={lockedDays}
+                onToggleDayLock={handleToggleDayLock}
               />
             </div>
           )}
@@ -863,6 +947,11 @@ export default function HomePage() {
                 该日期已有记录，请选择没有记录的日期
               </div>
             )}
+            {addingDate && isDayLocked(addingDate) && (
+              <div className="mb-4 px-3 py-2 bg-amber-50 border border-amber-200 text-amber-600 rounded-lg text-sm">
+                该日期已锁定（{isMonthLockedForDate(addingDate) ? '整月已锁定' : '当天已锁定'}），请先解锁后再记账
+              </div>
+            )}
             <div className="flex gap-3">
               <button
                 type="button"
@@ -876,11 +965,12 @@ export default function HomePage() {
                 onClick={async () => {
                   if (!addingDate) return
                   if (existingDates.has(addingDate)) return
+                  if (isDayLocked(addingDate)) return
                   setShowDateAdder(false)
                   setAddingDate('')
                   await saveNewDate(addingDate)
                 }}
-                disabled={!addingDate || existingDates.has(addingDate)}
+                disabled={!addingDate || existingDates.has(addingDate) || isDayLocked(addingDate)}
                 className="flex-1 px-4 py-2.5 bg-primary text-white rounded-xl text-sm font-medium hover:bg-primary-dark transition-colors disabled:opacity-50"
               >
                 添加
