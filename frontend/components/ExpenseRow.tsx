@@ -1,8 +1,12 @@
 // 记账列表单条记录行（含行内编辑：小类/金额/支付方式/收支类型/备注/日常非日常/编辑弹窗/删除）
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import InlineSelect from './InlineSelect'
-import type { CategoryWithChildren, Expense, PaymentMethodConfig, TransactionType, TxTypeConfig } from '../data/types'
+import type { CategoryWithChildren, Expense, PaymentMethodConfig, SubCategoryChild, TransactionType, TxTypeConfig } from '../data/types'
+import { resolveSubDefaults } from '../data/database'
 import type { EditField, EditForm } from './expenseListTypes'
+
+/** 小类下拉里「自定义」选项的哨兵值（不会与真实小类重名） */
+const CUSTOM_SUB_VALUE = '\u0000custom-sub'
 
 interface Props {
   expense: Expense
@@ -28,6 +32,8 @@ interface Props {
   onOpenEditDialog: (expense: Expense) => void
   onUpdate: (id: number, category_l2: string, note: string, amount: number, payment_method: string, type: TransactionType, is_non_daily: boolean) => Promise<void>
   onRefresh?: () => void
+  /** 小类下拉第一行「＋ 自定义」：把输入的名字存为新小类（重名直接复用）；返回是否成功 */
+  onCreateSubCategory?: (l1: string, name: string) => Promise<boolean>
 }
 
 export default function ExpenseRow({
@@ -49,6 +55,7 @@ export default function ExpenseRow({
   onOpenEditDialog,
   onUpdate,
   onRefresh,
+  onCreateSubCategory,
 }: Props) {
   // 编辑控件 refs，按 focusField 聚焦
   const categoryL2Ref = useRef<HTMLButtonElement | null>(null)
@@ -56,6 +63,11 @@ export default function ExpenseRow({
   const paymentRef = useRef<HTMLButtonElement | null>(null)
   const typeRef = useRef<HTMLButtonElement | null>(null)
   const noteRef = useRef<HTMLInputElement | null>(null)
+  // 小类下拉里点了「＋ 自定义」→ 该格子切换成输入框
+  const [customSubOpen, setCustomSubOpen] = useState(false)
+  const [customSubName, setCustomSubName] = useState('')
+  // 自定义输入框关掉后，重新挂载的下拉不要自动弹开（否则 Esc 一按又弹出来）
+  const [suppressSubOpen, setSuppressSubOpen] = useState(false)
 
   // 进入编辑态后按 focusField 聚焦对应编辑控件
   useEffect(() => {
@@ -74,6 +86,20 @@ export default function ExpenseRow({
     if (el instanceof HTMLInputElement) el.select()
   }, [isEditing, focusField])
 
+  // 退出编辑时关掉「自定义小类」输入框，避免下次进入编辑还停在输入态
+  useEffect(() => {
+    if (!isEditing) {
+      setCustomSubOpen(false)
+      setCustomSubName('')
+      setSuppressSubOpen(false)
+    }
+  }, [isEditing])
+
+  // 切到别的字段再回来时恢复正常（点小类格子依旧自动展开下拉）
+  useEffect(() => {
+    setSuppressSubOpen(false)
+  }, [focusField])
+
   const isLocal = expense.id < 0
   // 锁定日期的行完全只读：不进入编辑、不切换日常标记、不显示编辑/删除按钮
   const ro = !!readOnly
@@ -83,6 +109,63 @@ export default function ExpenseRow({
 
   const getSubCategories = (l1: string): string[] => {
     return categories.find((c) => c.name === l1)?.children.map((c) => c.name) || []
+  }
+
+  // 选中某个小类（含刚自定义出来的新小类）：
+  // 新增行 → 加载该小类的默认模板；已有记录 → 只改小类并立即保存退出编辑
+  const applySubSelected = (newL2: string, sub?: SubCategoryChild) => {
+    if (isLocal) {
+      const resolved = sub ?? categories.find((c) => c.name === expense.category_l1)?.children.find((c) => c.name === newL2)
+      // 条件规则：金额只来自规则（按这条记录的日期判断，不是今天）；没命中就给 0 让用户自己填
+      const defaults = resolved
+        ? resolveSubDefaults(resolved, expense.date)
+        : { matched: false, amount: 0, note: '', payment_method: '', type: 'expense' as TransactionType, is_non_daily: false }
+      onEditFormChange({
+        category_l2: newL2,
+        note: defaults.note,
+        payment_method: defaults.payment_method,
+        amount: defaults.amount ? defaults.amount.toString() : '0',
+        type: defaults.type,
+        is_non_daily: defaults.is_non_daily,
+      })
+    } else {
+      onEditFormChange({ ...editForm, category_l2: newL2 })
+      onSaveRow(expense.id)
+    }
+  }
+
+  const handleSubSelect = (newL2: string) => {
+    // 第一行「＋ 自定义」：把这个格子切换成输入框，不当作小类名
+    if (newL2 === CUSTOM_SUB_VALUE) {
+      setCustomSubName('')
+      setSuppressSubOpen(true)
+      setCustomSubOpen(true)
+      return
+    }
+    applySubSelected(newL2)
+  }
+
+  // 回车确认自定义小类：先存进分类表（重名直接复用），再按普通选中处理
+  const submitCustomSub = async () => {
+    const name = customSubName.trim()
+    setCustomSubOpen(false)
+    setCustomSubName('')
+    if (!name || !onCreateSubCategory) return
+    if (!getSubCategories(expense.category_l1).includes(name)) {
+      const ok = await onCreateSubCategory(expense.category_l1, name)
+      if (!ok) return
+    }
+    // 新小类没有模板默认值，用空模板兜底
+    applySubSelected(name, {
+      id: -1,
+      name,
+      is_default: false,
+      default_note: '',
+      default_payment_method: '',
+      default_amount: 0,
+      default_type: 'expense',
+      default_is_non_daily: false,
+    })
   }
 
   return (
@@ -117,7 +200,7 @@ export default function ExpenseRow({
             .then(() => onRefresh?.())
             .catch((err) => console.error('保存失败', err))
         }}
-        className={`w-[52px] h-5 flex-shrink-0 flex items-center justify-center rounded-md text-[10px] transition-colors ${
+        className={`w-[52px] h-6 flex-shrink-0 flex items-center justify-center rounded-md text-sm transition-colors ${
           ((isEditing || isLocal) ? editForm.is_non_daily : expense.is_non_daily)
             ? 'bg-slate-200 text-slate-500 hover:bg-slate-300'
             : 'bg-transparent text-slate-300 border border-dashed border-slate-200 hover:border-slate-400 hover:text-slate-500'
@@ -129,34 +212,38 @@ export default function ExpenseRow({
       {/* 小类 */}
       {isEditing ? (
         <div className="w-[110px] flex-shrink-0">
+          {customSubOpen ? (
+            <input
+              autoFocus
+              value={customSubName}
+              onChange={(e) => setCustomSubName(e.target.value)}
+              onKeyDown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter') submitCustomSub()
+                if (e.key === 'Escape') { setCustomSubOpen(false); setCustomSubName('') }
+              }}
+              onClick={(e) => e.stopPropagation()}
+              placeholder="新小类，回车确认"
+              className="w-full h-8 text-xs border border-primary rounded-lg px-2 bg-white focus:outline-none text-slate-700"
+            />
+          ) : (
           <InlineSelect
             value={editForm.category_l2}
-            options={getSubCategories(expense.category_l1).map((sc) => ({ value: sc, label: sc }))}
+            options={[
+              // 第一行：自定义新小类（点了就变成输入框）
+              ...(onCreateSubCategory
+                ? [{ value: CUSTOM_SUB_VALUE, label: <span className="text-primary">＋ 自定义</span> }]
+                : []),
+              ...getSubCategories(expense.category_l1).map((sc) => ({ value: sc, label: sc })),
+            ]}
             placeholder="请选择小类"
-            initialOpen={focusField === 'category_l2'}
+            initialOpen={focusField === 'category_l2' && !suppressSubOpen}
             textColor={editForm.category_l2 ? 'text-slate-700' : 'text-slate-400'}
             ref={categoryL2Ref}
             className="w-full"
-            onChange={(newL2) => {
-              if (isLocal) {
-                // 新增行：选择小类时自动加载模板默认值
-                const cat = categories.find((c) => c.name === expense.category_l1)
-                const sub = cat?.children.find((c) => c.name === newL2)
-                onEditFormChange({
-                  category_l2: newL2,
-                  note: sub?.default_note || '',
-                  payment_method: sub?.default_payment_method || '',
-                  amount: sub?.default_amount ? sub.default_amount.toString() : '0',
-                  type: sub?.default_type || 'expense',
-                  is_non_daily: sub?.default_is_non_daily || false,
-                })
-              } else {
-                // 已有记录：只改小类，保留原金额/备注/支付方式，选完即自动保存退出编辑
-                onEditFormChange({ ...editForm, category_l2: newL2 })
-                onSaveRow(expense.id)
-              }
-            }}
+            onChange={handleSubSelect}
           />
+          )}
         </div>
       ) : (
         <div

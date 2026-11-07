@@ -123,6 +123,40 @@ export interface SubCategoryChild {
   default_is_non_daily: boolean
 }
 
+// ===== 小类条件规则（subcategory_rules 表） =====
+
+/**
+ * 规则条件种类：
+ * - workday 工作日（含法定节假日与调休补班）/ rest 休息日
+ * - weekday 每周星期几（days: 1=周一 … 7=周日，多选 = 或）
+ * - monthday 每月第几天（days: 1–31，多选 = 或）
+ * - annual 每年某月某日（month + day）
+ */
+export type RuleConditionKind = 'workday' | 'rest' | 'weekday' | 'monthday' | 'annual'
+
+export interface RuleCondition {
+  kind: RuleConditionKind
+  /** weekday: 1–7；monthday: 1–31 */
+  days?: number[]
+  /** annual: 1–12 */
+  month?: number
+  /** annual: 1–31 */
+  day?: number
+}
+
+/** 一条小类条件规则：启用勾选 + 条件 + 金额（其余属性永远取小类主行） */
+export interface SubcategoryRule {
+  id: number
+  subcategory_id: number
+  /** 顺序 = 优先级，小的先匹配 */
+  sort_order: number
+  /** false = 勾掉了，匹配时跳过（规则保留） */
+  enabled: boolean
+  /** 空数组 = 「总是」（匹配所有日期） */
+  conditions: RuleCondition[]
+  amount: number
+}
+
 // 前端使用的分类树（含子分类的完整结构）
 export interface CategoryWithChildren {
   id: number

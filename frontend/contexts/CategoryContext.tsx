@@ -13,9 +13,30 @@ import {
   reorderCategories as dbReorderCategories,
   reorderSubCategories as dbReorderSubCategories,
   updateSubCategoryName as dbUpdateSubCategoryName,
+  getAllSubcategoryRules,
+  addSubcategoryRule as dbAddSubcategoryRule,
+  updateSubcategoryRule as dbUpdateSubcategoryRule,
+  deleteSubcategoryRule as dbDeleteSubcategoryRule,
+  deleteSubcategoryRules as dbDeleteSubcategoryRules,
+  reorderSubcategoryRules as dbReorderSubcategoryRules,
 } from '../data/database'
-import type { CategoryWithChildren, TransactionType } from '../data/types'
+import type { CategoryWithChildren, RuleCondition, SubcategoryRule, TransactionType } from '../data/types'
 import { applyOrder } from '../data/reorderUtils'
+
+/** 规则列表按小类 id 分组：界面每行直接取自己的规则，不用每次去库里查 */
+export type RulesBySub = Record<number, SubcategoryRule[]>
+
+/** 从数据层内存缓存里读全部规则，整理成「小类 id → 该小类的规则（已按优先级排序）」 */
+function loadRulesBySub(): RulesBySub {
+  const map: RulesBySub = {}
+  // getAllSubcategoryRules 读的是内存缓存（同步），数据层保证同一小类内已按 sort_order 升序
+  for (const rule of getAllSubcategoryRules()) {
+    const list = map[rule.subcategory_id]
+    if (list) list.push(rule)
+    else map[rule.subcategory_id] = [rule]
+  }
+  return map
+}
 
 interface CategoryContextValue {
   categories: CategoryWithChildren[]
@@ -32,6 +53,18 @@ interface CategoryContextValue {
   updateSubCategoryDefaults: (id: number, defaults: { default_note?: string; default_payment_method?: string; default_amount?: number; default_type?: TransactionType; default_is_non_daily?: boolean }) => Promise<void>
   reorderCategories: (orderedIds: number[]) => Promise<void>
   reorderSubCategories: (orderedIds: number[]) => Promise<void>
+  /** 每个小类的条件规则（key = 小类 id，value 已按匹配优先级排好序） */
+  rulesBySub: RulesBySub
+  /** 新增一条规则（默认「总是」+ ¥0），返回新规则 id */
+  addRule: (subId: number, conditions?: RuleCondition[], amount?: number) => Promise<number>
+  /** 修改规则（启用勾选 / 条件 / 金额，传哪个改哪个） */
+  updateRule: (id: number, patch: { enabled?: boolean; conditions?: RuleCondition[]; amount?: number }) => Promise<void>
+  /** 删除一条规则 */
+  deleteRule: (id: number) => Promise<void>
+  /** 清空某个小类的全部规则（「系统默认」一键恢复用） */
+  clearRules: (subId: number) => Promise<void>
+  /** 同一小类内重排规则（乐观更新：先改界面再落库） */
+  reorderRules: (subId: number, orderedIds: number[]) => Promise<void>
 }
 
 const CategoryContext = createContext<CategoryContextValue>(null!)
@@ -48,17 +81,25 @@ function applySubOrder(prev: CategoryWithChildren[], orderedIds: number[]): Cate
 
 export function CategoryProvider({ children }: { children: React.ReactNode }) {
   const [categories, setCategories] = useState<CategoryWithChildren[]>([])
+  const [rulesBySub, setRulesBySub] = useState<RulesBySub>({})
   const [loading, setLoading] = useState(true)
 
   const refresh = useCallback(async () => {
     try {
       const data = await getCategories()
       setCategories(data)
+      // 规则也一起刷新：删小类 / 勾 ✓（数据库会自动补规则）之后，规则列表必须跟着变
+      setRulesBySub(loadRulesBySub())
     } catch (err) {
       console.error('加载分类失败:', err)
     } finally {
       setLoading(false)
     }
+  }, [])
+
+  // 只刷新规则（改规则、删规则这些操作不需要重新查整棵分类树，省一次往返）
+  const refreshRules = useCallback(() => {
+    setRulesBySub(loadRulesBySub())
   }, [])
 
   useEffect(() => {
@@ -141,6 +182,45 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
     }
   }, [refresh])
 
+  // ===== 小类条件规则 =====
+  // 所有写操作完成后都从数据层缓存重新读一遍规则，界面才看得到最新的条数/顺序/条件。
+  const addRule = useCallback(async (subId: number, conditions: RuleCondition[] = [], amount = 0): Promise<number> => {
+    const newId = await dbAddSubcategoryRule(subId, conditions, amount)
+    refreshRules()
+    return newId
+  }, [refreshRules])
+
+  const updateRule = useCallback(async (id: number, patch: { enabled?: boolean; conditions?: RuleCondition[]; amount?: number }) => {
+    await dbUpdateSubcategoryRule(id, patch)
+    refreshRules()
+  }, [refreshRules])
+
+  const deleteRule = useCallback(async (id: number) => {
+    await dbDeleteSubcategoryRule(id)
+    refreshRules()
+  }, [refreshRules])
+
+  const clearRules = useCallback(async (subId: number) => {
+    await dbDeleteSubcategoryRules(subId)
+    refreshRules()
+  }, [refreshRules])
+
+  // 拖规则顺序和拖分类一样：先同步改内存顺序（否则松手动画会飞回旧位置），落库失败才重读回滚
+  const reorderRules = useCallback(async (subId: number, orderedIds: number[]) => {
+    setRulesBySub((prev) => {
+      const current = prev[subId] ?? []
+      const next = applyOrder(current, orderedIds)
+      if (next === current) return prev
+      return { ...prev, [subId]: next }
+    })
+    try {
+      await dbReorderSubcategoryRules(orderedIds)
+    } catch (err) {
+      console.error('保存规则顺序失败:', err)
+      refreshRules()
+    }
+  }, [refreshRules])
+
   return (
     <CategoryContext.Provider
       value={{
@@ -158,6 +238,12 @@ export function CategoryProvider({ children }: { children: React.ReactNode }) {
         updateSubCategoryDefaults,
         reorderCategories,
         reorderSubCategories,
+        rulesBySub,
+        addRule,
+        updateRule,
+        deleteRule,
+        clearRules,
+        reorderRules,
       }}
     >
       {children}

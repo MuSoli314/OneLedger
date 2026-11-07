@@ -1,6 +1,23 @@
+import { useEffect } from 'react'
 import { Outlet, NavLink } from 'react-router-dom'
+import { ensureHolidayData } from '../data/database'
+import { HOLIDAY_DATA_UPDATED_EVENT } from './HolidayStatusLine'
 
 export default function Layout() {
+  // 启动时检查一次节假日数据：静默进行、失败不影响任何功能；同一年 24 小时内最多联网一次。
+  // App 开着时不做后台定时（桌面版不常驻），下次启动再查。
+  useEffect(() => {
+    let alive = true
+    ensureHolidayData()
+      .then(() => {
+        if (alive) window.dispatchEvent(new Event(HOLIDAY_DATA_UPDATED_EVENT))
+      })
+      .catch(() => { /* 静默：联网失败不打扰用户 */ })
+    return () => {
+      alive = false
+    }
+  }, [])
+
   return (
     <div className="flex flex-col min-h-screen">
       {/* 顶部导航 */}

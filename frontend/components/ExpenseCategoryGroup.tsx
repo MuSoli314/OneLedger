@@ -31,6 +31,8 @@ interface Props {
   onOpenEditDialog: (expense: Expense) => void
   onUpdate: (id: number, category_l2: string, note: string, amount: number, payment_method: string, type: TransactionType, is_non_daily: boolean) => Promise<void>
   onRefresh?: () => void
+  /** 行内小类下拉第一行「＋ 自定义」：新建小类（重名复用） */
+  onCreateSubCategory?: (l1: string, name: string) => Promise<boolean>
 }
 
 export default function ExpenseCategoryGroup({
@@ -59,6 +61,7 @@ export default function ExpenseCategoryGroup({
   onOpenEditDialog,
   onUpdate,
   onRefresh,
+  onCreateSubCategory,
 }: Props) {
   // 该大类合计（ignore 类型不参与金额合计，与其它统计口径一致）
   const l1Total = l1Items.reduce((s, e) => s + (txTypeByCode.get(e.type)?.category === 'ignore' ? 0 : e.amount), 0)
@@ -139,6 +142,7 @@ export default function ExpenseCategoryGroup({
             onOpenEditDialog={onOpenEditDialog}
             onUpdate={onUpdate}
             onRefresh={onRefresh}
+            onCreateSubCategory={onCreateSubCategory}
           />
         )
       })}

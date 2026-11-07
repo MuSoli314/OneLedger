@@ -1,7 +1,16 @@
 import Database from '@tauri-apps/plugin-sql'
 import { isTauri, createWebDbConnection, type DbConnection } from './webDb'
-import type { Expense, ExpenseInput, Budget, TrendPoint, CategoryWithChildren, TransactionType, DailyTrendPoint, DailyNonDailyPoint, MonthlyStats, PaymentMethodConfig, TxTypeConfig, TxCategory } from './types'
+import type { Expense, ExpenseInput, Budget, TrendPoint, CategoryWithChildren, SubCategoryChild, TransactionType, DailyTrendPoint, DailyNonDailyPoint, MonthlyStats, PaymentMethodConfig, TxTypeConfig, TxCategory, RuleCondition, SubcategoryRule } from './types'
 import { categories as defaultCategories, DEFAULT_PAYMENT_METHODS, DEFAULT_TX_TYPES, NON_DAILY_DEFAULT_NAMES } from './categories'
+import { parseConditions, serializeConditions, matchRulesAmount, splitLocalDate } from './subcategoryRules'
+import {
+  BUILTIN_FIRST_YEAR,
+  collectBuiltinHolidayDays,
+  fetchHolidayYear,
+  holidayFetchTargets,
+  shouldCheckYear,
+  type HolidayDay,
+} from './holidaySync'
 
 // 分类筛选的组合键分隔符（小类名在不同大类下可能重名，故用「大类+小类」作唯一键）
 // HomePage / StatsPanel / database 共用此函数，保证键格式一致
@@ -35,6 +44,266 @@ function assertDateEditable(date: string) {
   }
 }
 
+// ===== 小类条件规则内存缓存 =====
+// 规则匹配会被频繁调用（列表渲染 / 自动记账），必须同步返回，所以连库时整表读进内存。
+// key = 小类 id，value = 已按 sort_order 升序排好的规则（顺序即优先级）。
+let subRules = new Map<number, SubcategoryRule[]>()
+
+/** 同步读取某个小类的全部规则（按匹配顺序）；没有规则返回 [] */
+export function getSubcategoryRules(subId: number): SubcategoryRule[] {
+  return subRules.get(subId) ?? []
+}
+
+/** 同步读取某个小类的规则条数（界面上的数字角标用） */
+export function getSubcategoryRuleCount(subId: number): number {
+  return (subRules.get(subId) ?? []).length
+}
+
+/**
+ * 同步把「某个小类 × 某一天」匹配成金额。这是**唯一的**金额来源（设计文档 6.1）。
+ * @returns 命中的金额；一条都没命中返回 null（= 这个小类这天不生效）
+ */
+export function matchSubcategoryAmount(
+  subId: number,
+  date: string,
+  isWorkdayFn: (date: string) => boolean = isWorkday
+): number | null {
+  return matchRulesAmount(subRules.get(subId) ?? [], date, isWorkdayFn)
+}
+
+/** 同步读取全部小类规则（界面按小类分组用） */
+export function getAllSubcategoryRules(): SubcategoryRule[] {
+  const all: SubcategoryRule[] = []
+  for (const list of subRules.values()) all.push(...list)
+  return all
+}
+
+function rulesFromRows(
+  rows: { id: number; subcategory_id: number; sort_order: number; enabled: number; conditions: string; amount: number }[]
+): Map<number, SubcategoryRule[]> {
+  const map = new Map<number, SubcategoryRule[]>()
+  for (const r of rows) {
+    const list = map.get(r.subcategory_id) ?? []
+    list.push({
+      id: r.id,
+      subcategory_id: r.subcategory_id,
+      sort_order: r.sort_order,
+      enabled: r.enabled === 1,
+      conditions: parseConditions(r.conditions),
+      amount: r.amount || 0,
+    })
+    map.set(r.subcategory_id, list)
+  }
+  return map
+}
+
+/** 重新把 subcategory_rules 整表读进内存缓存（写操作后调用；表很小，代价可忽略） */
+async function reloadSubRules(): Promise<void> {
+  const database = await getDb()
+  const rows = await database.select<
+    { id: number; subcategory_id: number; sort_order: number; enabled: number; conditions: string; amount: number }[]
+  >('SELECT id, subcategory_id, sort_order, enabled, conditions, amount FROM subcategory_rules ORDER BY subcategory_id ASC, sort_order ASC, id ASC')
+  subRules = rulesFromRows(rows)
+}
+
+// ===== 节假日数据内存缓存 =====
+// 工作日判定要被规则匹配频繁调用，必须**同步**返回，所以整表读进内存（同 lockedDays 的思路）。
+// 表里只有「特殊日期」（放假 + 调休补班）；查不到 = 按周一~周五判断。
+let holidayDays = new Map<string, { name: string; isOffDay: boolean }>()
+let holidayYears = new Map<number, { ready: boolean; source: string; fetchedAt: string | null; lastCheckedAt: string | null }>()
+
+/** 同步判断某天是不是「上班日」（含法定节假日与调休：补班日算上班） */
+export function isWorkday(date: string): boolean {
+  const special = holidayDays.get(date)
+  if (special) return !special.isOffDay
+  const { isoWeekday } = splitLocalDate(date)
+  return isoWeekday <= 5
+}
+
+/** 同步判断某天是不是「休息日」（周末 + 法定节假日，不含调休补班） */
+export function isRestDay(date: string): boolean {
+  return !isWorkday(date)
+}
+
+/** 同步取某天的节假日名称（不是特殊日期返回空字符串） */
+export function getHolidayName(date: string): string {
+  return holidayDays.get(date)?.name ?? ''
+}
+
+export interface HolidayDataStatus {
+  currentYear: number
+  nextYear: number
+  /** 已就绪（数据完整可用）的年份，升序 */
+  readyYears: number[]
+  /** 最后一个就绪年份（用来提示「已更新至 X 年」） */
+  latestReadyYear: number | null
+  currentYearReady: boolean
+  nextYearReady: boolean
+  /** 表里的特殊日期条数（0 = 还没导入任何数据） */
+  specialDayCount: number
+}
+
+/** 同步读取节假日数据状态（界面状态行用；缓存未加载时返回空状态） */
+export function getHolidayDataStatus(now: Date = new Date()): HolidayDataStatus {
+  const currentYear = now.getFullYear()
+  const readyYears = [...holidayYears.entries()]
+    .filter(([, v]) => v.ready)
+    .map(([y]) => y)
+    .sort((a, b) => a - b)
+  return {
+    currentYear,
+    nextYear: currentYear + 1,
+    readyYears,
+    latestReadyYear: readyYears.length > 0 ? readyYears[readyYears.length - 1] : null,
+    currentYearReady: holidayYears.get(currentYear)?.ready === true,
+    nextYearReady: holidayYears.get(currentYear + 1)?.ready === true,
+    specialDayCount: holidayDays.size,
+  }
+}
+
+/** 等数据库连上（缓存加载完）再读状态，界面首次渲染用 */
+export async function getHolidayDataStatusAsync(): Promise<HolidayDataStatus> {
+  await getDb()
+  return getHolidayDataStatus()
+}
+
+/** 把 holidays / holiday_years 读进内存 */
+async function loadHolidayCache(conn: DbConnection): Promise<void> {
+  const dayRows = await conn.select<{ date: string; name: string; is_off_day: number }[]>(
+    'SELECT date, name, is_off_day FROM holidays'
+  )
+  const yearRows = await conn.select<
+    { year: number; ready: number; source: string; fetched_at: string | null; last_checked_at: string | null }[]
+  >('SELECT year, ready, source, fetched_at, last_checked_at FROM holiday_years')
+  holidayDays = new Map(dayRows.map((r) => [r.date, { name: r.name || '', isOffDay: r.is_off_day === 1 }]))
+  holidayYears = new Map(
+    yearRows.map((r) => [
+      r.year,
+      { ready: r.ready === 1, source: r.source || '', fetchedAt: r.fetched_at, lastCheckedAt: r.last_checked_at },
+    ])
+  )
+}
+
+/** 分批多行插入（一条 SQL 插 N 行，避免几百次往返） */
+async function insertHolidayDays(conn: DbConnection, days: HolidayDay[]): Promise<void> {
+  const CHUNK = 50
+  for (let i = 0; i < days.length; i += CHUNK) {
+    const chunk = days.slice(i, i + CHUNK)
+    const values: string[] = []
+    const params: (string | number)[] = []
+    chunk.forEach((d, j) => {
+      const base = j * 4
+      values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`)
+      params.push(d.date, d.year, d.name, d.isOffDay ? 1 : 0)
+    })
+    await conn.execute(
+      `INSERT OR REPLACE INTO holidays (date, year, name, is_off_day) VALUES ${values.join(', ')}`,
+      params
+    )
+  }
+}
+
+/** 写入（或覆盖）某一年的数据，并标记该年就绪 */
+async function replaceHolidayYear(conn: DbConnection, year: number, days: HolidayDay[], source: string): Promise<void> {
+  const now = new Date().toISOString()
+  await conn.execute('DELETE FROM holidays WHERE year=$1', [year])
+  await insertHolidayDays(conn, days)
+  const existing = await conn.select<{ year: number }[]>('SELECT year FROM holiday_years WHERE year=$1 LIMIT 1', [year])
+  if (existing.length > 0) {
+    await conn.execute(
+      'UPDATE holiday_years SET ready=1, source=$1, fetched_at=$2, last_checked_at=$2 WHERE year=$3',
+      [source, now, year]
+    )
+  } else {
+    await conn.execute(
+      'INSERT INTO holiday_years (year, ready, source, fetched_at, last_checked_at) VALUES ($1, 1, $2, $3, $3)',
+      [year, source, now]
+    )
+  }
+}
+
+/** 只记录「今天联网查过了」，不标记就绪（没公布 / 联网失败都走这里，用于 24 小时节流） */
+async function markHolidayChecked(conn: DbConnection, year: number): Promise<void> {
+  const now = new Date().toISOString()
+  const existing = await conn.select<{ year: number }[]>('SELECT year FROM holiday_years WHERE year=$1 LIMIT 1', [year])
+  if (existing.length > 0) {
+    await conn.execute('UPDATE holiday_years SET last_checked_at=$1 WHERE year=$2', [now, year])
+  } else {
+    await conn.execute(
+      'INSERT INTO holiday_years (year, ready, source, last_checked_at) VALUES ($1, 0, "", $2)',
+      [year, now]
+    )
+  }
+}
+
+/**
+ * 首次安装：把依赖库内置的节假日数据一次性导入（2001–当年），保证**离线也能判定**。
+ * 之后联网抓到的数据以 holiday-cn 为准覆盖。只在 holiday_years 为空时执行。
+ */
+async function seedBuiltinHolidays(conn: DbConnection): Promise<void> {
+  const count = await conn.select<{ cnt: number }[]>('SELECT COUNT(*) as cnt FROM holiday_years')
+  if ((count[0]?.cnt ?? 0) > 0) return
+  const currentYear = new Date().getFullYear()
+  for (let year = BUILTIN_FIRST_YEAR; year <= currentYear; year++) {
+    const days = collectBuiltinHolidayDays(year, year)
+    if (days.length === 0) continue // 该年内置也没有（尚未公布）→ 不建年份行，留给联网抓取
+    await replaceHolidayYear(conn, year, days, 'builtin')
+  }
+}
+
+let holidaySyncRun: Promise<{ checked: number; updated: number }> | null = null
+
+/**
+ * 启动检查 / 「立即更新」：按节流规则把缺的年份补上。
+ * 永不抛异常（联网失败静默），返回本次真正联网检查的年份数与成功写入的年份数。
+ */
+export async function ensureHolidayData(opts: { force?: boolean } = {}): Promise<{ checked: number; updated: number }> {
+  const force = opts.force === true
+  // 启动时 React StrictMode 会把 effect 跑两遍 → 合并成一次（force 不受影响）
+  if (holidaySyncRun) {
+    if (!force) return holidaySyncRun
+    await holidaySyncRun.catch(() => {})
+  }
+  holidaySyncRun = runHolidaySync(force).finally(() => {
+    holidaySyncRun = null
+  })
+  return holidaySyncRun
+}
+
+async function runHolidaySync(force: boolean): Promise<{ checked: number; updated: number }> {
+  try {
+    const database = await getDb()
+    const now = new Date()
+    const status = getHolidayDataStatus(now)
+    const targets = holidayFetchTargets({
+      currentYear: status.currentYear,
+      currentMonth: now.getMonth() + 1,
+      isReady: (year) => holidayYears.get(year)?.ready === true,
+      lastReadyYear: status.latestReadyYear,
+    })
+    let checked = 0
+    let updated = 0
+    for (const year of targets) {
+      const record = holidayYears.get(year)
+      if (!shouldCheckYear(record?.lastCheckedAt ?? null, now.getTime(), force)) continue
+      checked++
+      const result = await fetchHolidayYear(year)
+      if (!result.ok || !result.published) {
+        // 联网失败 / 该年安排尚未公布 → 只记「查过了」，不标记就绪，下次继续试
+        await markHolidayChecked(database, year)
+        continue
+      }
+      await replaceHolidayYear(database, year, result.days, 'holiday-cn')
+      updated++
+    }
+    if (checked > 0) await loadHolidayCache(database)
+    return { checked, updated }
+  } catch (err) {
+    console.error('节假日数据更新失败:', err)
+    return { checked: 0, updated: 0 }
+  }
+}
+
 async function getDb(): Promise<DbConnection> {
   if (db) return db
   if (!dbInit) {
@@ -42,7 +311,6 @@ async function getDb(): Promise<DbConnection> {
   }
   return dbInit
 }
-
 /** 尝试连接数据库，失败时自动重试 */
 async function connectDb(retries = 2): Promise<DbConnection> {
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -84,6 +352,12 @@ async function connectDb(retries = 2): Promise<DbConnection> {
       )
       await conn.execute(
         'CREATE TABLE IF NOT EXISTS subcategories (id INTEGER PRIMARY KEY AUTOINCREMENT, category_id INTEGER NOT NULL, name TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE)'
+      )
+      // 小类条件规则表（v2）：一个可选多条，「启用勾选 + 条件 + 金额」。
+      // 金额的唯一来源；支付方式 / 收支类型 / 备注 / 日常标记仍取小类主行（公共属性）。
+      // conditions 空数组 = 「总是」（匹配所有日期）—— 没有独立的「兜底」功能，它就是一条普通规则。
+      await conn.execute(
+        'CREATE TABLE IF NOT EXISTS subcategory_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, subcategory_id INTEGER NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, conditions TEXT NOT NULL DEFAULT "[]", amount REAL NOT NULL DEFAULT 0, FOREIGN KEY (subcategory_id) REFERENCES subcategories(id) ON DELETE CASCADE)'
       )
 
       // 迁移：给大类添加默认标记（老库默认全勾选，保持「添加某天」行为不变）
@@ -152,6 +426,17 @@ async function connectDb(retries = 2): Promise<DbConnection> {
         await conn.execute('PRAGMA user_version = 1')
       }
 
+      // 迁移 v2（2026-10-24）：小类固定默认值 → 条件规则。
+      // 给每个「已勾 ✓ 的默认小类」生成一条「总是」规则（金额 = 原来的 default_amount），
+      // 于是升级后的自动记账结果和升级前**完全一致**；用户想改成条件规则再自己编辑。
+      // 一次性：置 2 后不再执行，用户之后删掉的规则不会被重新加回。
+      if (userVersion < 2) {
+        await conn.execute(
+          "INSERT INTO subcategory_rules (subcategory_id, sort_order, enabled, conditions, amount) SELECT id, 0, 1, '[]', COALESCE(default_amount, 0) FROM subcategories s WHERE (is_default=1 OR COALESCE(default_amount, 0) <> 0) AND NOT EXISTS (SELECT 1 FROM subcategory_rules r WHERE r.subcategory_id = s.id)"
+        )
+        await conn.execute('PRAGMA user_version = 2')
+      }
+
       // 确保预算表存在
       await conn.execute(
         'CREATE TABLE IF NOT EXISTS budgets (id INTEGER PRIMARY KEY AUTOINCREMENT, month TEXT NOT NULL UNIQUE, amount REAL NOT NULL DEFAULT 0)'
@@ -183,6 +468,24 @@ async function connectDb(retries = 2): Promise<DbConnection> {
       )
       lockedMonths = new Set(lockMonthRows.map((r) => r.month))
       lockedDays = new Set(lockDayRows.map((r) => r.date))
+
+      // 小类条件规则读进内存缓存（同步匹配用）
+      const ruleRows = await conn.select<
+        { id: number; subcategory_id: number; sort_order: number; enabled: number; conditions: string; amount: number }[]
+      >('SELECT id, subcategory_id, sort_order, enabled, conditions, amount FROM subcategory_rules ORDER BY subcategory_id ASC, sort_order ASC, id ASC')
+      subRules = rulesFromRows(ruleRows)
+
+      // 节假日数据表：只存「特殊日期」（放假 + 调休补班）；没有的日期在判定时按周一~周五推。
+      // holiday_years 每年一行，记录该年数据是否就绪、来源、最后一次联网检查时间（用于 24 小时节流）。
+      await conn.execute(
+        'CREATE TABLE IF NOT EXISTS holidays (date TEXT PRIMARY KEY, year INTEGER NOT NULL, name TEXT NOT NULL DEFAULT "", is_off_day INTEGER NOT NULL DEFAULT 0)'
+      )
+      await conn.execute(
+        'CREATE TABLE IF NOT EXISTS holiday_years (year INTEGER PRIMARY KEY, ready INTEGER NOT NULL DEFAULT 0, source TEXT NOT NULL DEFAULT "", fetched_at TEXT, last_checked_at TEXT)'
+      )
+      await loadHolidayCache(conn)
+      // 首次安装：导入依赖库内置的节假日数据（2001–当年），离线也能判定工作日
+      await seedBuiltinHolidays(conn)
 
       // 播种默认支付方式
       const pmCount = await conn.select<{ cnt: number }[]>('SELECT COUNT(*) as cnt FROM payment_methods')
@@ -266,6 +569,16 @@ export async function deleteExpensesByCategory(date: string, category_l1: string
   const database = await getDb()
   assertDateEditable(date)
   await database.execute('DELETE FROM expenses WHERE date=$1 AND category_l1=$2', [date, category_l1])
+}
+
+// 统计某天还剩多少条记录（删除后判断这天是否已被删空 → 自动标记「当天无消费」）
+export async function countExpensesByDate(date: string): Promise<number> {
+  const database = await getDb()
+  const rows = await database.select<{ cnt: number }[]>(
+    'SELECT COUNT(*) as cnt FROM expenses WHERE date=$1',
+    [date]
+  )
+  return rows[0]?.cnt ?? 0
 }
 
 // 查询消费记录列表
@@ -560,11 +873,16 @@ export async function addCategory(name: string, icon: string): Promise<number> {
   return result.lastInsertId as number
 }
 
-// 删除大类（级联删除所有子分类）
+// 删除大类（级联删除所有子分类及其条件规则）
 export async function deleteCategory(id: number): Promise<void> {
   const database = await getDb()
+  await database.execute(
+    'DELETE FROM subcategory_rules WHERE subcategory_id IN (SELECT id FROM subcategories WHERE category_id=$1)',
+    [id]
+  )
   await database.execute('DELETE FROM subcategories WHERE category_id=$1', [id])
   await database.execute('DELETE FROM categories WHERE id=$1', [id])
+  await reloadSubRules()
 }
 
 // 更新大类名称
@@ -595,10 +913,12 @@ export async function addSubCategory(categoryId: number, name: string): Promise<
   return result.lastInsertId as number
 }
 
-// 删除小类
+// 删除小类（连同它名下的条件规则一起删；SQLite 默认不开启外键，故手动清理）
 export async function deleteSubCategory(id: number): Promise<void> {
   const database = await getDb()
+  await database.execute('DELETE FROM subcategory_rules WHERE subcategory_id=$1', [id])
   await database.execute('DELETE FROM subcategories WHERE id=$1', [id])
+  await reloadSubRules()
 }
 
 // 更新小类名称
@@ -607,10 +927,18 @@ export async function updateSubCategoryName(id: number, name: string): Promise<v
   await database.execute('UPDATE subcategories SET name=$1 WHERE id=$2', [name, id])
 }
 
-// 切换小类是否默认
+// 切换小类是否默认（= 是否参与自动记账的总开关）
+// 勾上的瞬间如果一条规则都没有，自动补一条「总是 ¥0」——否则「勾了 ✓ 却什么都不记」很困惑。
 export async function toggleSubCategoryDefault(id: number, is_default: boolean): Promise<void> {
   const database = await getDb()
   await database.execute('UPDATE subcategories SET is_default=$1 WHERE id=$2', [is_default ? 1 : 0, id])
+  if (is_default && (subRules.get(id)?.length ?? 0) === 0) {
+    await database.execute(
+      'INSERT INTO subcategory_rules (subcategory_id, sort_order, enabled, conditions, amount) VALUES ($1, 0, 1, \'[]\', 0)',
+      [id]
+    )
+    await reloadSubRules()
+  }
 }
 
 // 更新小类的默认模板值
@@ -675,6 +1003,109 @@ export async function reorderSubCategories(orderedIds: number[]): Promise<void> 
   if (orderedIds.length === 0) return
   const database = await getDb()
   await database.execute(buildReorderSql('subcategories', orderedIds.length), reorderParams(orderedIds))
+}
+
+// ========== 小类条件规则（subcategory_rules） ==========
+// 规则 = 启用勾选 + 条件 + 金额；顺序即优先级（从上往下，命中第一条即用）。
+// 所有写操作完成后都重新读一遍缓存，保证内存与库一致。
+
+/** 新增一条规则，返回新规则 id。新规则默认「总是」+ 金额 0（由调用方传参决定） */
+export async function addSubcategoryRule(
+  subId: number,
+  conditions: RuleCondition[] = [],
+  amount: number = 0
+): Promise<number> {
+  const database = await getDb()
+  const result = await database.execute(
+    'INSERT INTO subcategory_rules (subcategory_id, sort_order, enabled, conditions, amount) VALUES ($1, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM subcategory_rules WHERE subcategory_id=$1), 1, $2, $3)',
+    [subId, serializeConditions(conditions), amount]
+  )
+  await reloadSubRules()
+  return result.lastInsertId as number
+}
+
+/** 修改规则（启用勾选 / 条件 / 金额，传哪个改哪个） */
+export async function updateSubcategoryRule(
+  id: number,
+  patch: { enabled?: boolean; conditions?: RuleCondition[]; amount?: number }
+): Promise<void> {
+  const database = await getDb()
+  const sets: string[] = []
+  const vals: (string | number)[] = []
+  let idx = 1
+  if (patch.enabled !== undefined) {
+    sets.push(`enabled=$${idx++}`)
+    vals.push(patch.enabled ? 1 : 0)
+  }
+  if (patch.conditions !== undefined) {
+    sets.push(`conditions=$${idx++}`)
+    vals.push(serializeConditions(patch.conditions))
+  }
+  if (patch.amount !== undefined) {
+    sets.push(`amount=$${idx++}`)
+    vals.push(patch.amount)
+  }
+  if (sets.length === 0) return
+  vals.push(id)
+  await database.execute(`UPDATE subcategory_rules SET ${sets.join(', ')} WHERE id=$${idx}`, vals)
+  await reloadSubRules()
+}
+
+/** 删除一条规则（删掉后就不再参与匹配） */
+export async function deleteSubcategoryRule(id: number): Promise<void> {
+  const database = await getDb()
+  await database.execute('DELETE FROM subcategory_rules WHERE id=$1', [id])
+  await reloadSubRules()
+}
+
+/** 清空某个小类的全部规则（「系统默认」一键恢复时用） */
+export async function deleteSubcategoryRules(subId: number): Promise<void> {
+  const database = await getDb()
+  await database.execute('DELETE FROM subcategory_rules WHERE subcategory_id=$1', [subId])
+  await reloadSubRules()
+}
+
+export interface ResolvedSubDefaults {
+  /** 是否有规则命中（批量入口只给 matched=true 的小类写记录） */
+  matched: boolean
+  amount: number
+  note: string
+  payment_method: string
+  type: TransactionType
+  is_non_daily: boolean
+}
+
+/**
+ * 解析「某小类在某天该带出什么值」—— 4 个「取默认值」的入口共用（设计文档 6.1）。
+ *
+ * · 金额**只**来自规则（从上往下，命中第一条）；
+ * · 支付方式 / 收支类型 / 备注 / 日常标记**永远取主行**（小类的公共属性）；
+ * · matched=false（一条规则都没命中）时金额为 0：批量入口据此跳过这条记录，手动入口则给一行让用户自己填。
+ *
+ * 注：规则是否生效不看小类的 ✓（✓ 管的是「批量自动记账要不要带上它」）；
+ * 手动点某个小类时，只要它配了规则就按规则预填金额，这和以前「预填默认金额」的手感一致。
+ */
+export function resolveSubDefaults(
+  sub: Pick<SubCategoryChild, 'id' | 'default_note' | 'default_payment_method' | 'default_type' | 'default_is_non_daily'>,
+  date: string
+): ResolvedSubDefaults {
+  const amount = matchSubcategoryAmount(sub.id, date)
+  return {
+    matched: amount !== null,
+    amount: amount ?? 0,
+    note: sub.default_note || '',
+    payment_method: sub.default_payment_method || '',
+    type: sub.default_type || 'expense',
+    is_non_daily: sub.default_is_non_daily || false,
+  }
+}
+
+/** 拖拽后批量更新规则顺序（同一小类内） */
+export async function reorderSubcategoryRules(orderedIds: number[]): Promise<void> {
+  if (orderedIds.length === 0) return
+  const database = await getDb()
+  await database.execute(buildReorderSql('subcategory_rules', orderedIds.length), reorderParams(orderedIds))
+  await reloadSubRules()
 }
 
 // ========== 支付方式配置 ==========

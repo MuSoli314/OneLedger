@@ -4,11 +4,11 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useCategories } from '../contexts/CategoryContext'
 import { useSettings } from '../contexts/SettingsContext'
 import type { TransactionType } from '../data/types'
-import { evaluateExpression } from '../data/calcUtils'
 import { EMOJI_LIST } from '../data/emojis'
 import { IconPickerButton } from '../components/EmojiPicker'
 import InlineSelect from '../components/InlineSelect'
 import ConfirmDialog from '../components/ConfirmDialog'
+import HolidayStatusLine from '../components/HolidayStatusLine'
 import SystemDefaultCategories from '../components/SystemDefaultCategories'
 import { categories as defaultCategories, NON_DAILY_DEFAULT_NAMES, DEFAULT_PAYMENT_METHODS } from '../data/categories'
 import SortableCategoryRow from '../components/SortableCategoryRow'
@@ -41,6 +41,8 @@ export default function CategoryPage() {
     updateSubCategoryName,
     reorderCategories,
     reorderSubCategories,
+    addRule,
+    clearRules,
   } = useCategories()
 
   const { paymentMethods, txTypes } = useSettings()
@@ -68,7 +70,7 @@ export default function CategoryPage() {
 
   // 编辑小类（名称 + 默认模板）
   const [editingSubId, setEditingSubId] = useState<number | null>(null)
-  const [subEditForm, setSubEditForm] = useState<SubEditForm>({ sub_name: '', default_note: '', default_payment_method: '', default_amount: '', default_type: 'expense' as TransactionType, default_is_non_daily: false })
+  const [subEditForm, setSubEditForm] = useState<SubEditForm>({ sub_name: '', default_note: '', default_payment_method: '', default_type: 'expense' as TransactionType, default_is_non_daily: false })
   // 进入编辑时聚焦哪个字段（点哪个格子聚焦哪个）
   const [focusField, setFocusField] = useState<EditField | null>(null)
   const subEditRef = useRef<HTMLDivElement>(null)
@@ -81,14 +83,9 @@ export default function CategoryPage() {
   editingSubIdRef.current = editingSubId
   subEditFormRef.current = subEditForm
 
-  // 保存小类编辑（名称 + 默认值）
+  // 保存小类编辑（名称 + 公共属性）
+  // 注意：金额不在这里保存了 —— 小类的金额只来自「条件规则」，在展开的规则区里改
   const doSaveSub = useCallback(async (id: number, form: typeof subEditForm) => {
-    // 默认金额：支持算式（如 5*2）；空/非法视为 0；负数不允许（与记账行内校验口径一致）
-    const default_amount = evaluateExpression(form.default_amount) || 0
-    if (default_amount < 0) {
-      alert('默认金额不能为负数')
-      return
-    }
     if (id === -1 && pendingAddCatId !== null) {
       // 新增小类：支付方式/收支类型必填（表单已默认第一项，这里再兜底取第一项）
       if (form.sub_name.trim()) {
@@ -96,7 +93,6 @@ export default function CategoryPage() {
         await updateSubCategoryDefaults(newId, {
           default_note: form.default_note,
           default_payment_method: form.default_payment_method || paymentMethods[0]?.name || '',
-          default_amount,
           default_type: form.default_type || txTypes[0]?.code || 'expense',
           default_is_non_daily: form.default_is_non_daily,
         })
@@ -107,11 +103,10 @@ export default function CategoryPage() {
       if (form.sub_name.trim()) {
         await updateSubCategoryName(id, form.sub_name.trim())
       }
-      // 更新默认值模板
+      // 更新公共属性（支付方式 / 收支类型 / 备注 / 日常标记，所有规则共用）
       await updateSubCategoryDefaults(id, {
         default_note: form.default_note,
         default_payment_method: form.default_payment_method,
-        default_amount,
         default_type: form.default_type,
         default_is_non_daily: form.default_is_non_daily,
       })
@@ -196,14 +191,13 @@ export default function CategoryPage() {
     }
   }
 
-  const startEditSub = (sub: { id: number; name: string; is_default: boolean; default_note: string; default_payment_method: string; default_amount: number; default_type: TransactionType; default_is_non_daily: boolean }, field: EditField = 'sub_name') => {
+  const startEditSub = (sub: { id: number; name: string; is_default: boolean; default_note: string; default_payment_method: string; default_type: TransactionType; default_is_non_daily: boolean }, field: EditField = 'sub_name') => {
     setEditingSubId(sub.id)
     setFocusField(field)
     setSubEditForm({
       sub_name: sub.name,
       default_note: sub.default_note || '',
       default_payment_method: sub.default_payment_method || '',
-      default_amount: sub.default_amount ? sub.default_amount.toString() : '',
       default_type: sub.default_type || 'expense',
       default_is_non_daily: sub.default_is_non_daily,
     })
@@ -218,7 +212,6 @@ export default function CategoryPage() {
       sub_name: '',
       default_note: '',
       default_payment_method: paymentMethods[0]?.name ?? '',
-      default_amount: '',
       default_type: txTypes[0]?.code ?? 'expense',
       default_is_non_daily: false,
     })
@@ -271,15 +264,22 @@ export default function CategoryPage() {
   }
 
   // ===== 从「系统默认」恢复到「我的分类」 =====
-  // 按出厂种子配置恢复一个小类：建小类 + 默认支付方式（第一个默认值，与播种一致）+ 非日常标记 + 种子默认小类标记
+  // 按出厂种子配置恢复一个小类：建小类 + 默认支付方式（第一个默认值，与播种一致）+ 非日常标记 + 种子默认小类标记。
+  // 规则也要恢复成出厂状态：先清空它的规则；出厂就是默认小类的话，再重建一条「总是 ¥0」规则
+  // （出厂种子没有金额，所以固定 0，和旧版「每天自动占位、提醒填金额」的行为一致）。
   const restoreSubInto = useCallback(async (catId: number, child: { name: string; is_default?: boolean }) => {
     const subId = await addSubCategory(catId, child.name)
+    await clearRules(subId)
     await updateSubCategoryDefaults(subId, {
       default_payment_method: DEFAULT_PAYMENT_METHODS[0]?.name ?? '',
       default_is_non_daily: NON_DAILY_DEFAULT_NAMES.has(child.name),
     })
-    if (child.is_default) await toggleSubCategoryDefault(subId, true)
-  }, [addSubCategory, updateSubCategoryDefaults, toggleSubCategoryDefault])
+    if (child.is_default) {
+      // 先补规则再勾 ✓：数据库在勾选时发现「没有规则」会自动补一条，先补好就不会重复
+      await addRule(subId, [], 0)
+      await toggleSubCategoryDefault(subId, true)
+    }
+  }, [addSubCategory, clearRules, updateSubCategoryDefaults, addRule, toggleSubCategoryDefault])
 
   const handleRestoreCategory = useCallback(async (l1: string) => {
     const seed = defaultCategories.find((c) => c.name === l1)
@@ -344,8 +344,12 @@ export default function CategoryPage() {
 
       {/* 说明 */}
       <div className="text-xs text-slate-400 bg-slate-50 border border-slate-100 rounded-lg px-3 py-2 leading-relaxed">
-        大类前勾选 ✓ = 该大类参与「添加某天」自动记账；未勾选的大类不会自动添加。小类前勾选 ✓ = 该小类是默认小类（记账时自动带出）。
+        大类前勾选 ✓ = 该大类参与「添加某天」自动记账；未勾选的大类不会自动添加。小类前勾选 ✓ = 该小类是默认小类（记账时自动带出）。小类前面的 &gt;
+        可展开「条件规则」——金额只写在规则里，按从上往下的顺序匹配，命中第一条就用它的金额。
       </div>
+
+      {/* 节假日数据状态：工作日的判定靠它，缺数据时按周一~周五算（不影响记账） */}
+      <HolidayStatusLine />
 
       {/* 两栏：左列「我的分类」（可编辑）+ 右列「系统默认」（只读，可恢复） */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
@@ -361,6 +365,7 @@ export default function CategoryPage() {
         <div className="text-center py-12 text-slate-400 text-base">暂无分类，请在下方添加</div>
       ) : (
         <DndContext
+          id="category-dnd"
           sensors={sensors}
           collisionDetection={closestCenter}
           modifiers={[restrictToVerticalAxis]}
@@ -434,6 +439,8 @@ export default function CategoryPage() {
                         className="flex items-center gap-2 px-2 pl-2 py-1 text-base bg-indigo-50 border-l-2 border-l-primary border-b border-slate-50"
                       >
                         <div className="w-6 flex-shrink-0" />
+                        {/* 规则区尖头占位，保持和普通小类行对齐 */}
+                        <div className="w-[18px] flex-shrink-0" />
                         <div className="w-4 flex-shrink-0" />
                         <input
                           type="text"
@@ -447,17 +454,6 @@ export default function CategoryPage() {
                         />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              value={subEditForm.default_amount}
-                              onChange={(e) => setSubEditForm({ ...subEditForm, default_amount: e.target.value })}
-                              placeholder="金额"
-                              className="w-[90px] text-xs border border-slate-200 rounded-lg px-2 h-8 bg-white focus:outline-none focus:border-primary text-right font-semibold tabular-nums"
-                              style={{ color: subEditForm.default_type === 'income' ? '#10b981' : subEditForm.default_type === 'ignore' ? '#94a3b8' : '#ef4444' }}
-                              onClick={(e) => e.stopPropagation()}
-                              onKeyDown={handleSubEditKeyDown}
-                            />
                             <InlineSelect
                               value={subEditForm.default_payment_method}
                               options={paymentMethods.map((pm) => ({ value: pm.name, label: <span className="inline-flex items-center gap-1">{pm.icon} {pm.name}</span> }))}

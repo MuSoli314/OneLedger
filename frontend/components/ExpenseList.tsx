@@ -7,11 +7,11 @@ import CategoryAddPopover from './CategoryAddPopover'
 import ExpenseCategoryGroup from './ExpenseCategoryGroup'
 import HoverTip from './HoverTip'
 import { useSettings } from '../contexts/SettingsContext'
-import { addExpense } from '../data/database'
+import { addExpense, resolveSubDefaults } from '../data/database'
 import { evaluateExpression } from '../data/calcUtils'
 import { useCategories } from '../contexts/CategoryContext'
 import { formatDate, getWeekday } from '../data/dateUtils'
-import type { Expense, ExpenseInput, TransactionType } from '../data/types'
+import type { Expense, ExpenseInput, SubCategoryChild, TransactionType } from '../data/types'
 import type { LocalRow, EditField, EditForm } from './expenseListTypes'
 
 interface Props {
@@ -401,21 +401,25 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
   }, [addingDate])
 
   // 直接添加指定小类（联动面板右侧点击具体小类）— 只加这一条，带默认值预填
-  const handleAddSubCategoryDirect = (date: string, l1: string, l2: string, resolvedSub?: { default_note: string; default_payment_method: string; default_amount: number; default_type: TransactionType; default_is_non_daily: boolean }) => {
+  const handleAddSubCategoryDirect = (date: string, l1: string, l2: string, resolvedSub?: SubCategoryChild) => {
     const cat = categories.find((c) => c.name === l1)
     // 自定义提交时分类表可能还没刷新到，用已解析的小类兜底
     const sub = resolvedSub ?? cat?.children.find((c) => c.name === l2)
+    // 条件规则：金额只来自规则。手动点小类时即使没命中规则也给一行（金额 0，让用户自己填）
+    const resolved = sub
+      ? resolveSubDefaults(sub, date)
+      : { matched: false, amount: 0, note: '', payment_method: '', type: 'expense' as TransactionType, is_non_daily: false }
     const id = nextTempId.current--
     const newRow: LocalRow = {
       tempId: id,
       date,
       category_l1: l1,
       category_l2: l2,
-      note: sub?.default_note || '',
-      amount: sub?.default_amount || 0,
-      payment_method: sub?.default_payment_method || '',
-      type: sub?.default_type || 'expense',
-      is_non_daily: sub?.default_is_non_daily || false,
+      note: resolved.note,
+      amount: resolved.amount,
+      payment_method: resolved.payment_method,
+      type: resolved.type,
+      is_non_daily: resolved.is_non_daily,
     }
     setLocalRows((prev) => [...prev, newRow])
     setEditingId(id)
@@ -423,11 +427,11 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
     setFocusField('amount')
     handleEditFormChange({
       category_l2: l2,
-      note: sub?.default_note || '',
-      amount: (sub?.default_amount || 0).toString(),
-      payment_method: sub?.default_payment_method || '',
-      type: sub?.default_type || 'expense',
-      is_non_daily: sub?.default_is_non_daily || false,
+      note: resolved.note,
+      amount: resolved.amount.toString(),
+      payment_method: resolved.payment_method,
+      type: resolved.type,
+      is_non_daily: resolved.is_non_daily,
     })
     // 展开该日期，让用户看到刚添加的记录
     setExpandedDates((prev) => new Set(prev).add(date))
@@ -451,7 +455,10 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
         console.error('添加自定义小类失败:', err)
       }
     }
-    const resolvedSub = cat.children.find((c) => c.name === name) ?? {
+    const resolvedSub: SubCategoryChild = cat.children.find((c) => c.name === name) ?? {
+      id: -1,
+      name,
+      is_default: false,
       default_note: '',
       default_payment_method: '',
       default_amount: 0,
@@ -465,33 +472,44 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
     handleAddSubCategoryDirect(date, l1, name, resolvedSub)
   }
 
-  // 点击左栏大类：有默认小类 → 批量添加所有默认小类行；没有 → 建一个空行让用户自选
+  // 点击左栏大类：有默认小类且「这天有规则命中」→ 批量添加命中的小类行；一条都没有 → 建一个空行让用户自选
   const handleAddCategory = (date: string, l1: string) => {
     const defaults = getDefaultSubs(l1)
-    if (defaults.length > 0) {
-      // 有默认小类 → 自动生成所有默认小类行
+    // 条件规则：只给「这天有规则命中」的默认小类生成行（设计文档 6.3）
+    const hits = defaults
+      .map((sub) => ({ sub, resolved: resolveSubDefaults(sub, date) }))
+      .filter((item) => item.resolved.matched)
+    if (hits.length > 0) {
+      // 有命中 → 自动生成这些默认小类行
       const newRows: LocalRow[] = []
-      for (const sub of defaults) {
+      for (const { sub, resolved } of hits) {
         const id = nextTempId.current--
         newRows.push({
           tempId: id,
           date,
           category_l1: l1,
           category_l2: sub.name,
-          note: sub.default_note || '',
-          amount: sub.default_amount || 0,
-          payment_method: sub.default_payment_method || '',
-          type: sub.default_type || 'expense',
-          is_non_daily: sub.default_is_non_daily,
+          note: resolved.note,
+          amount: resolved.amount,
+          payment_method: resolved.payment_method,
+          type: resolved.type,
+          is_non_daily: resolved.is_non_daily,
         })
       }
       setLocalRows((prev) => [...prev, ...newRows])
       // 聚焦到最后一个小类行
-      const lastSub = defaults[defaults.length - 1]
+      const lastHit = hits[hits.length - 1]
       const lastId = newRows[newRows.length - 1].tempId
       setEditingId(lastId)
       setFocusField('amount')
-      handleEditFormChange({ category_l2: lastSub.name, note: lastSub.default_note || '', amount: (lastSub.default_amount || 0).toString(), payment_method: lastSub.default_payment_method || '', type: lastSub.default_type || 'expense', is_non_daily: lastSub.default_is_non_daily })
+      handleEditFormChange({
+        category_l2: lastHit.sub.name,
+        note: lastHit.resolved.note,
+        amount: lastHit.resolved.amount.toString(),
+        payment_method: lastHit.resolved.payment_method,
+        type: lastHit.resolved.type,
+        is_non_daily: lastHit.resolved.is_non_daily,
+      })
     } else {
       // 没有默认小类 → 和老逻辑一样创建空行让用户选择
       handleAddSubCategory(date, l1)
@@ -522,6 +540,22 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
     setCustomizingCategory(false)
     setHoverL1(name)
     setCustomizingL1(null)
+  }
+
+  // 行内「小类」下拉第一行「＋ 自定义」：把名字存为新小类（已存在同名直接复用）
+  const handleCreateSubCategory = async (l1: string, name: string): Promise<boolean> => {
+    const trimmed = name.trim()
+    if (!trimmed) return false
+    const cat = categories.find((c) => c.name === l1)
+    if (!cat) return false
+    if (cat.children.some((c) => c.name === trimmed)) return true
+    try {
+      await addSubCategory(cat.id, trimmed)
+      return true
+    } catch (err) {
+      console.error('添加自定义小类失败:', err)
+      return false
+    }
   }
 
   // 添加本地临时小类行
@@ -916,6 +950,7 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
                     onDelete={onDelete}
                     onOpenEditDialog={openEditDialog}
                     onUpdate={onUpdate}
+                    onCreateSubCategory={handleCreateSubCategory}
                     onRefresh={onRefresh}
                   />
                 ))

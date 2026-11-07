@@ -113,8 +113,11 @@ export default function SystemDefaultCategories({
                       key={child.name}
                       className="flex items-center gap-2 px-2 pl-2 py-1 text-base border-b border-slate-50 hover:bg-slate-50"
                     >
-                      {/* 拖拽手柄占位 */}
+                      {/* 拖拽手柄占位（对齐「我的分类」列的拖拽手柄） */}
                       <div className="w-6 flex-shrink-0" />
+
+                      {/* 规则区尖头占位（左侧小类行有 `>` 展开规则区，这里留同样宽度的空位保持对齐） */}
+                      <div className="w-[18px] flex-shrink-0" />
 
                       {/* 默认小类开关：只读展示 */}
                       <span
@@ -127,7 +130,7 @@ export default function SystemDefaultCategories({
 
                       {/* 日常/非日常标记：只读展示（固定宽度，两态一致不跳动） */}
                       <span
-                        className={`w-[52px] h-5 flex-shrink-0 flex items-center justify-center rounded-md text-[10px] ${
+                        className={`w-[52px] h-6 flex-shrink-0 flex items-center justify-center rounded-md text-sm ${
                           isNonDaily
                             ? 'bg-slate-200 text-slate-500'
                             : 'bg-transparent text-slate-300 border border-dashed border-slate-200'
@@ -141,12 +144,9 @@ export default function SystemDefaultCategories({
                         {child.name}
                       </span>
 
-                      {/* 默认模板摘要（出厂默认值） */}
+                      {/* 公共属性摘要（出厂默认值；金额已从主行移到规则里，这里不再显示金额格） */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold tabular-nums w-[100px] text-right flex-shrink-0 text-expense">
-                            -¥0.00
-                          </span>
                           <span className="inline-flex items-center gap-0.5 w-[90px] flex-shrink-0 text-sm text-slate-400 bg-slate-100 px-2 py-1 rounded-full overflow-hidden whitespace-nowrap">
                             {seedPayIcon}
                             {seedPay}

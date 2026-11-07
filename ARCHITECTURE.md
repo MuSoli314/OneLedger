@@ -202,6 +202,8 @@ CategoryContext / SettingsContext（缓存树形数据，操作后自动 refresh
    （`addExpense / updateExpense / deleteExpense / deleteExpensesByDate / deleteExpensesByCategory`）开头一律
    `assertDateEditable(date)`（改记录时新旧日期都要过），UI 藏按钮只是第二道防线。两个锁属性**互不修改**，
    解锁只把 `is_locked` 置 0、保留行。唯一例外：`updatePaymentMethodName` 的批量改名会写到锁定日期的记录（属元数据改名，非内容修改）。
+   - **删空某天自动补日锁**：`HomePage.tsx` 的三条删除路径删完后调 `countExpensesByDate(date)`，为 0 就 `setDayLocked(date, true)`
+     （`autoConfirmNoSpendIfEmpty`）——「添加某天 → 删掉 ¥0 占位记录」收尾成「当天无消费」，不再退回「未记录」。仅运行时删除触发，老数据不批量补标记。
 10. **悬浮提示**：新增提示一律用 `components/HoverTip.tsx`（CSS 自绘，移入即显、移出即隐），不要再用原生 `title`
    （Tauri WebView 里要等约 1 秒、有时不弹）。贴近容器右边缘的元素传 `align="right"`，并给包裹层加 `shrink-0`。
    历史遗留的原生 `title` 仍散落在日历格子、记录行徽章、分类/设置页图标按钮等处（约 40 处），尚未迁移，逐步替换。

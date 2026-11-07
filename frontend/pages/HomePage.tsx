@@ -10,6 +10,7 @@ import {
   deleteExpense,
   deleteExpensesByDate,
   deleteExpensesByCategory,
+  countExpensesByDate,
   updateExpense,
   getMonths,
   getBudget,
@@ -19,6 +20,7 @@ import {
   expensesToCSV,
   addExpense,
   catKey,
+  resolveSubDefaults,
   listLocks,
   setMonthLocked,
   setDayLocked,
@@ -293,15 +295,40 @@ export default function HomePage() {
     return () => document.removeEventListener('keydown', handleEsc)
   }, [showDateAdder])
 
+  /**
+   * 删除记录后的收尾：如果这天已经一条记录都不剩，自动把它标记为「当天无消费」（上日锁）。
+   *
+   * 为什么需要：点「添加某天」时，命中「总是」规则的小类（默认早餐/午餐/晚餐）会先写成一批
+   * ¥0 占位记录，这天立刻变成「已记账」；如果用户这天其实没花钱，就会把这些占位记录删光。
+   * 以前删光后这天退回「未记录」，看起来像刚才的「添加」白做了，也没有明显的收尾入口。
+   * 现在「删空」即视为「确认这天没花钱」：列表里就地显示一行「当天无消费」，流程完成闭环。
+   * 想继续补记的话点 🔒 解锁即可（锁定 / 解锁可逆，不丢数据）。
+   */
+  const autoConfirmNoSpendIfEmpty = async (date: string) => {
+    // 整月锁生效时数据层会拦住删除，根本走不到这里；正常只给「删空的那一天」上日锁
+    if (isMonthLockedForDate(date)) return
+    try {
+      const remaining = await countExpensesByDate(date)
+      if (remaining > 0) return
+      await setDayLocked(date, true)
+      setLockedDays((prev) => new Set(prev).add(date))
+    } catch (err) {
+      console.error('自动标记「当天无消费」失败:', err)
+    }
+  }
+
   const handleDelete = (expense: Expense) => {
     setDeleteTarget(expense)
   }
 
   const confirmDelete = async () => {
     if (!deleteTarget) return
+    const date = deleteTarget.date
     try {
       await deleteExpense(deleteTarget.id)
       setDeleteTarget(null)
+      // 这天的最后一条记录被删掉 → 自动标记「当天无消费」（不是退回「未记录」）
+      await autoConfirmNoSpendIfEmpty(date)
       loadData()
     } catch (err) {
       alert('删除失败：' + String(err))
@@ -315,9 +342,12 @@ export default function HomePage() {
 
   const confirmDeleteDate = async () => {
     if (!deleteDateTarget) return
+    const date = deleteDateTarget
     try {
-      await deleteExpensesByDate(deleteDateTarget)
+      await deleteExpensesByDate(date)
       setDeleteDateTarget(null)
+      // 整天记录被删光 → 自动标记「当天无消费」
+      await autoConfirmNoSpendIfEmpty(date)
       loadData()
     } catch (err) {
       alert('删除失败：' + String(err))
@@ -331,9 +361,12 @@ export default function HomePage() {
 
   const confirmDeleteCategory = async () => {
     if (!deleteCategoryTarget) return
+    const { date } = deleteCategoryTarget
     try {
-      await deleteExpensesByCategory(deleteCategoryTarget.date, deleteCategoryTarget.category_l1)
+      await deleteExpensesByCategory(date, deleteCategoryTarget.category_l1)
       setDeleteCategoryTarget(null)
+      // 删掉的是这天最后一个大类 → 自动标记「当天无消费」
+      await autoConfirmNoSpendIfEmpty(date)
       loadData()
     } catch (err) {
       alert('删除失败：' + String(err))
@@ -375,16 +408,19 @@ export default function HomePage() {
       if (!cat.is_default) continue
       const defaults = cat.children.filter((c) => c.is_default)
       for (const sub of defaults) {
+        // 条件规则：金额只来自规则；一条规则都没命中 → 这天不给这个小类记账（设计文档 6.3）
+        const resolved = resolveSubDefaults(sub, date)
+        if (!resolved.matched) continue
         try {
           await addExpense({
-            amount: sub.default_amount || 0,
+            amount: resolved.amount,
             category_l1: cat.name,
             category_l2: sub.name,
             date,
-            note: sub.default_note || '',
-            payment_method: sub.default_payment_method || '',
-            type: sub.default_type || 'expense',
-            is_non_daily: sub.default_is_non_daily,
+            note: resolved.note,
+            payment_method: resolved.payment_method,
+            type: resolved.type,
+            is_non_daily: resolved.is_non_daily,
           })
           savedAny = true
         } catch (err) {
