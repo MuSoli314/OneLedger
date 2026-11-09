@@ -67,7 +67,7 @@ frontend/
 │   ├── MonthCalendar.tsx      #   支出日历（42 格固定行数，金额热力底色，悬停黄历）
 │   ├── LunarCard.tsx          #   农历黄历卡（宜/忌，悬停联动）
 │   ├── TrendChart.tsx         #   折线图（月度趋势 / 按天双线，Y 轴分段压缩）
-│   ├── ExpenseList.tsx        #   记账列表主组件（日期分组 + 缺失日期快捷行 + 行内编辑状态 + 完整编辑弹窗入口）
+│   ├── ExpenseList.tsx        #   记账列表主组件（日期分组 + 缺失日期快捷行 + 行内编辑状态 + 完整编辑弹窗入口 + 折叠/展开档位状态）
 │   ├── ExpenseRow.tsx         #   单条记录行（含行内编辑：小类/金额/支付方式/类型/备注/日常/删除）
 │   ├── ExpenseCategoryGroup.tsx # 按日分组内的「一级大类」分组（标题 + 记录行 + 添加小类）
 │   ├── CategoryAddPopover.tsx #   「添加」按钮弹出的大类+小类联动选择面板（支持自定义）

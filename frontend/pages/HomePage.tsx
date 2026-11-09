@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import ExpenseList from '../components/ExpenseList'
+import ExpenseList, { type ExpandCommand, type ExpandControlsState } from '../components/ExpenseList'
 import ConfirmDialog from '../components/ConfirmDialog'
 import DatePicker from '../components/DatePicker'
 import DateRangePicker from '../components/DateRangePicker'
@@ -107,6 +107,37 @@ export default function HomePage() {
           ? 'expandDaysCollapseL1'
           : 'expandAll'
   const amountExpandKey = amountFilterActive ? `${amountFilterMode}:${amountThreshold}` : ''
+
+  // ===== 标题行「折叠 / 展开」按钮：一次走一档（第 1 档按天折叠 → 第 2 档展开大类 → 第 3 档展开小类）=====
+  // 折叠状态在 ExpenseList 内部，这里只发命令（seq 递增，点一次走一档）并接收「下一档」用于禁用按钮 / 写提示
+  const [expandCommand, setExpandCommand] = useState<ExpandCommand | undefined>(undefined)
+  const [expandControls, setExpandControls] = useState<ExpandControlsState>({ expandStep: 'l1', collapseStep: 'none' })
+  const handleExpandControlsChange = useCallback((state: ExpandControlsState) => {
+    // 状态没变就沿用旧对象，避免父组件无意义重渲染（列表 effect → 父组件 setState → 再渲染的循环）
+    setExpandControls((prev) =>
+      prev.expandStep === state.expandStep && prev.collapseStep === state.collapseStep ? prev : state,
+    )
+  }, [])
+  const runExpandCommand = (action: 'expand' | 'collapse') => {
+    setExpandCommand((prev) => ({ action, seq: (prev?.seq ?? 0) + 1 }))
+  }
+  // 搜索中列表强制展开（searchActive 是渲染期覆盖），此时按钮按了看不出效果，直接置灰
+  const expandDisabled = searchActive || expandControls.expandStep === 'none'
+  const collapseDisabled = searchActive || expandControls.collapseStep === 'none'
+  const collapseTip = searchActive
+    ? '搜索中列表强制展开，清空搜索后可用'
+    : expandControls.collapseStep === 'none'
+      ? '已全部折叠：一天一行，没有可折叠的了'
+      : expandControls.collapseStep === 'l1'
+        ? '折叠一级：收起每个大类（回到每天每个大类一行）'
+        : '折叠一级：收起所有天（回到一天一行）'
+  const expandTip = searchActive
+    ? '搜索中列表强制展开，清空搜索后可用'
+    : expandControls.expandStep === 'none'
+      ? '已全部展开：每一笔记录都露出来了，没有可展开的了'
+      : expandControls.expandStep === 'l1'
+        ? '展开一级：所有天展开、每个大类收起（一天里一个大类一行）'
+        : '展开一级：展开每个大类，显示每一笔记录'
 
   const thisMonth = localMonthString()
 
@@ -900,7 +931,7 @@ export default function HomePage() {
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="inline-flex items-center gap-1 text-sm font-medium text-emerald-700 bg-emerald-100/90 rounded-full px-2.5 h-9 shrink-0">📝 记账列表</span>
                 {/* 搜索框：只留一小段宽度（原来 flex-1 铺满整行），给右侧金额筛选腾位置 */}
-                <div className="relative flex-1 min-w-36 max-w-[220px]">
+                <div className="relative flex-1 min-w-[120px] max-w-[220px]">
                   <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
                   </svg>
@@ -971,10 +1002,51 @@ export default function HomePage() {
                     </div>
                   </div>
                 </HoverTip>
+                {/* 折叠 / 展开：一次走一档（按天折叠 → 展开大类 → 展开小类，折叠反向）。
+                    放在金额筛选与「快捷添加」之间的空隙里；窄窗口（<1280，左侧栏只剩约 576px）
+                    自动只留图标，保证这一行始终不换行 */}
+                <div className="inline-flex items-center gap-0.5 h-9 rounded-xl border border-slate-200 bg-white shadow-sm p-0.5 shrink-0 ml-auto">
+                  <HoverTip text={collapseTip}>
+                    <button
+                      type="button"
+                      onClick={() => runExpandCommand('collapse')}
+                      disabled={collapseDisabled}
+                      aria-label="折叠一级"
+                      className={`inline-flex items-center gap-1 h-8 px-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        collapseDisabled
+                          ? 'text-slate-300 cursor-not-allowed'
+                          : 'text-slate-500 hover:bg-slate-100 hover:text-primary'
+                      }`}
+                    >
+                      <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 14l8-8 8 8M4 20l8-8 8 8" />
+                      </svg>
+                      <span className="hidden xl:inline">折叠</span>
+                    </button>
+                  </HoverTip>
+                  <HoverTip text={expandTip} align="right">
+                    <button
+                      type="button"
+                      onClick={() => runExpandCommand('expand')}
+                      disabled={expandDisabled}
+                      aria-label="展开一级"
+                      className={`inline-flex items-center gap-1 h-8 px-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        expandDisabled
+                          ? 'text-slate-300 cursor-not-allowed'
+                          : 'text-slate-500 hover:bg-slate-100 hover:text-primary'
+                      }`}
+                    >
+                      <span className="hidden xl:inline">展开</span>
+                      <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4l8 8 8-8M4 10l8 8 8-8" />
+                      </svg>
+                    </button>
+                  </HoverTip>
+                </div>
                 {/* 快捷添加开关：控制缺失日期「+ 添加」快捷行的显隐（悬浮气泡说明显示条件与功能；
                     原生 title 在 Tauri WebView 不显示，沿用黄历卡的自定义气泡方案；
                     任一筛选（支付方式/日常/分类/金额/搜索）生效时快捷行不显示，按钮整体置灰不可点） */}
-                <div className="relative group shrink-0 ml-auto">
+                <div className="relative group shrink-0">
                   <button
                     type="button"
                     onClick={() => !hasAnyFilter && setShowQuickAdd((v) => !v)}
@@ -1016,6 +1088,8 @@ export default function HomePage() {
                 searchActive={searchActive}
                 expandPreset={amountExpandPreset}
                 expandPresetKey={amountExpandKey}
+                expandCommand={expandCommand}
+                onExpandControlsChange={handleExpandControlsChange}
                 lockedMonths={lockedMonths}
                 lockedDays={lockedDays}
                 onToggleDayLock={handleToggleDayLock}

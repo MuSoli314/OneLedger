@@ -1,6 +1,6 @@
 // 记账列表主组件：日期分组 + 缺失日期快捷行 + 行内编辑状态管理 + 完整编辑弹窗
 // （单条记录行 / 大类分组 / 添加弹层 / 支付方式统计已拆到独立组件）
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import EditExpenseDialog from './EditExpenseDialog'
 import PaymentMethodTotals from './PaymentMethodTotals'
 import CategoryAddPopover from './CategoryAddPopover'
@@ -13,6 +13,23 @@ import { useCategories } from '../contexts/CategoryContext'
 import { formatDate, getWeekday } from '../data/dateUtils'
 import type { Expense, ExpenseInput, SubCategoryChild, TransactionType } from '../data/types'
 import type { LocalRow, EditField, EditForm } from './expenseListTypes'
+
+/**
+ * 折叠/展开按钮的「下一档」（按钮放在记账列表标题行，见 HomePage）：
+ * - expandStep：l1 = 展开天 + 收起大类（第 2 档）；records = 展开大类看单条记录（第 3 档）；none = 已全展开
+ * - collapseStep：l1 = 收起大类（回第 2 档，天保持展开）；days = 收起所有天（回第 1 档）；none = 已全折叠
+ */
+export type ExpandStep = 'none' | 'l1' | 'records'
+export type CollapseStep = 'none' | 'l1' | 'days'
+export interface ExpandControlsState {
+  expandStep: ExpandStep
+  collapseStep: CollapseStep
+}
+/** 父组件 → 列表的折叠/展开命令：每点一次按钮 seq + 1，列表只在 seq 变化时走一档 */
+export interface ExpandCommand {
+  action: 'expand' | 'collapse'
+  seq: number
+}
 
 interface Props {
   expenses: Expense[]
@@ -44,6 +61,13 @@ interface Props {
   expandPreset?: 'collapseDays' | 'expandDaysCollapseL1' | 'expandAll'
   /** 展开预设的触发键（如 `day:100`）：值变化时重新套用一次预设；阈值/条件不变就不动用户手动状态 */
   expandPresetKey?: string
+  /**
+   * 标题行「折叠 / 展开」按钮的命令：一次走一档
+   * （展开：按天折叠 → 展开大类 → 展开小类；折叠反向），每点一次 seq + 1
+   */
+  expandCommand?: ExpandCommand
+  /** 把当前折叠状态回报给父组件：用于到底时禁用按钮 + 悬停提示说明「点这一下会发生什么」 */
+  onExpandControlsChange?: (state: ExpandControlsState) => void
   /** 月锁集合（YYYY-MM）：某月已锁 → 该月每天都是锁定的（含未来日期） */
   lockedMonths?: Set<string>
   /** 日锁集合（YYYY-MM-DD） */
@@ -117,7 +141,7 @@ function collectRunLayout(
   }
 }
 
-export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull, onRefresh, extraDates, autoExpandDates, missingDates, onAddDate, onDeleteDate, onDeleteCategory, hasFilter, searchActive, expandPreset, expandPresetKey, lockedMonths, lockedDays, onToggleDayLock }: Props) {
+export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull, onRefresh, extraDates, autoExpandDates, missingDates, onAddDate, onDeleteDate, onDeleteCategory, hasFilter, searchActive, expandPreset, expandPresetKey, expandCommand, onExpandControlsChange, lockedMonths, lockedDays, onToggleDayLock }: Props) {
   const { categories, addSubCategory, addCategory } = useCategories()
   const { paymentMethods, txTypes, defaultExpenseCode } = useSettings()
   const [collapsedMap, setCollapsedMap] = useState<Set<string>>(new Set())
@@ -198,6 +222,66 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
       setCollapsedMap(collapsed)
     }
   }, [expandPreset, expandPresetKey, expenses, extraDates, missingDates])
+
+  // 折叠/展开按钮的「下一档」：看列表眼下的实际样子算出来（不在程序里记「当前第几档」），
+  // 这样用户中途手动点过某天/某个大类之后，按钮仍然接着实际状态往上 / 往下走一档。
+  const expandControls = useMemo<ExpandControlsState>(() => {
+    const dates = new Set<string>()
+    for (const e of expenses) dates.add(e.date)
+    for (const d of extraDates || []) dates.add(d)
+    let anyDateExpanded = false
+    let anyDateCollapsed = false
+    for (const d of dates) {
+      if (expandedDates.has(d)) anyDateExpanded = true
+      else anyDateCollapsed = true
+    }
+    // 大类只在「天已展开」时才有视觉意义（天收着的时候里面什么都不显示）
+    let anyL1Expanded = false
+    let anyL1Collapsed = false
+    for (const e of expenses) {
+      if (!expandedDates.has(e.date)) continue
+      if (collapsedMap.has(`${e.date}|${e.category_l1}`)) anyL1Collapsed = true
+      else anyL1Expanded = true
+    }
+    const expandStep: ExpandStep = anyDateCollapsed ? 'l1' : anyL1Collapsed ? 'records' : 'none'
+    const collapseStep: CollapseStep = anyL1Expanded ? 'l1' : anyDateExpanded ? 'days' : 'none'
+    return { expandStep, collapseStep }
+  }, [expenses, extraDates, expandedDates, collapsedMap])
+
+  // 把「下一档」回报给父组件（父组件据此禁用到底的按钮、写悬停提示文字）
+  const onExpandControlsChangeRef = useRef(onExpandControlsChange)
+  onExpandControlsChangeRef.current = onExpandControlsChange
+  useEffect(() => {
+    onExpandControlsChangeRef.current?.(expandControls)
+  }, [expandControls])
+
+  // 执行父组件发来的折叠/展开命令：一次只走一档，且按「实际状态」决定往哪走
+  const lastExpandCommandSeq = useRef(0)
+  useEffect(() => {
+    if (!expandCommand || expandCommand.seq === lastExpandCommandSeq.current) return
+    lastExpandCommandSeq.current = expandCommand.seq
+    const dates = new Set<string>()
+    for (const e of expenses) dates.add(e.date)
+    for (const d of extraDates || []) dates.add(d)
+    const allL1Keys = new Set<string>()
+    for (const e of expenses) allL1Keys.add(`${e.date}|${e.category_l1}`)
+    if (expandCommand.action === 'expand') {
+      if (expandControls.expandStep === 'l1') {
+        // 第 1 档 → 第 2 档：天全部展开、大类全部收起（一天里一个大类一行）
+        setExpandedDates(dates)
+        setCollapsedMap(allL1Keys)
+      } else if (expandControls.expandStep === 'records') {
+        // 第 2 档 → 第 3 档：大类全部展开（每一笔记录都露出来）
+        setCollapsedMap(new Set())
+      }
+    } else if (expandControls.collapseStep === 'l1') {
+      // 第 3 档 → 第 2 档：收起所有大类，天保持展开
+      setCollapsedMap(allL1Keys)
+    } else if (expandControls.collapseStep === 'days') {
+      // 第 2 档 → 第 1 档：收起所有天
+      setExpandedDates(new Set())
+    }
+  }, [expandCommand, expandControls, expenses, extraDates])
 
   // 展开/收起连续缺失段（「+ 更多」）
   const toggleRunCollapse = (runId: string) => {
