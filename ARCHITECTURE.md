@@ -2,6 +2,8 @@
 
 > 本文档面向**接手项目的人**：先读这一份，再读 [README.md](README.md)（产品视角）。
 > 读完本文档，你应该能回答：代码放哪、数据怎么流、命名什么规矩、改一处要动几个文件。
+>
+> 🤖 **AI 开工请先读根 [AGENTS.md](AGENTS.md)**（分层 AI 指导总纲 + 目录导航）。本文件是给人看的架构总览，两个目录层级的 `AGENTS.md` 是给 AI 的就近说明，内容应保持一致。
 
 ---
 
@@ -53,7 +55,9 @@ frontend/
 │   ├── dateUtils.ts       #   本地日期工具（杜绝 UTC 时区 Bug）
 │   ├── calcUtils.ts       #   金额算式解析（+ - * / 括号，递归下降，无 eval）
 │   ├── amountFilter.ts    #   记账列表金额筛选：按天/大类/单笔 + ≥ 阈值（纯函数，含输入净化）
+│   ├── subcategoryRules.ts #  小类条件规则：条件模型 + 纯匹配（不依赖 DB / React，可直接单测）
 │   ├── reorderUtils.ts    #   拖拽重排工具（按 id 列表重排数组，乐观更新用，纯函数）
+│   ├── holidaySync.ts     #   节假日数据：内置导入 + holiday-cn 抓取 + 24 小时节流（不碰 DB）
 │   ├── lunarUtils.ts      #   农历/节气/节日/黄历（缓存计算结果）
 │   ├── emojis.ts          #   emoji 候选列表（分类/设置共用）
 │   └── lunar-javascript.d.ts  # 第三方库手写类型声明
@@ -63,8 +67,8 @@ frontend/
 │   └── HomeFilterContext.tsx  #   首页筛选状态（时间范围/支付方式/分类/金额筛选，切页保留，纯内存）
 ├── components/            # 「视图层」：通用与业务组件
 │   ├── Layout.tsx             #   顶栏导航 + 路由出口
-│   ├── MonthOverview.tsx      #   记账页顶部：支出日历(1/3) + 黄历卡 + 按天趋势图(2/3)
-│   ├── MonthCalendar.tsx      #   支出日历（42 格固定行数，金额热力底色，悬停黄历）
+│   ├── MonthOverview.tsx      #   记账页顶部：支出日历(左 1/3) + 右侧上黄历卡 / 下按天双线图(2/3)
+│   ├── MonthCalendar.tsx      #   支出日历（42 格固定行数；有支出统一浅靛蓝底，不按金额分档；悬停黄历）
 │   ├── LunarCard.tsx          #   农历黄历卡（宜/忌，悬停联动）
 │   ├── TrendChart.tsx         #   折线图（月度趋势 / 按天双线，Y 轴分段压缩）
 │   ├── ExpenseList.tsx        #   记账列表主组件（日期分组 + 缺失日期快捷行 + 行内编辑状态 + 完整编辑弹窗入口 + 折叠/展开档位状态）
@@ -76,7 +80,10 @@ frontend/
 │   ├── DragHandle.tsx         #   拖拽排序手柄（六点 grip，两页共用，触摸设备放大）
 │   ├── sortableConfig.ts      #   拖拽排序统一配置（传感器/让位动画/垂直锁定/行样式）
 │   ├── SortableCategoryRow.tsx #  分类管理可拖拽大类行（标题/改名/图标选择/小类插槽）
-│   ├── SortableSubCategoryRow.tsx # 分类管理可拖拽小类行（默认模板行内编辑，导出 EditField/SubEditForm）
+│   ├── SortableSubCategoryRow.tsx # 分类管理可拖拽小类行（公共属性行内编辑 + 规则条数徽章展开规则区，导出 EditField/SubEditForm）
+│   ├── SubcategoryRuleList.tsx  # 小类规则列表（启用勾选/条件标签/金额行内编辑/拖拽排序/删除，嵌套 DndContext）
+│   ├── RuleConditionPanel.tsx   # 规则条件面板（总是/工作日/休息日/每周多选/每月多选/每年某月某日）
+│   ├── HolidayStatusLine.tsx    # 节假日数据状态行 +「立即更新」（分类管理页顶部）
 │   ├── SystemDefaultCategories.tsx # 分类管理「系统默认」只读列（出厂种子清单展示 + 一键恢复按钮）
 │   ├── EditExpenseDialog.tsx  #   记录完整编辑弹窗（含日期）
 │   ├── StatsPanel.tsx         #   右栏分类排行（可勾选筛选）
@@ -94,6 +101,8 @@ frontend/
 ```
 
 **约定**：`data/` 不 import React；`pages/` 只做页面编排；业务组件在 `components/`；全局状态只在 `contexts/`。
+
+**AI 指导**：从上到下的每个目录（`frontend/`、`frontend/data/`、`frontend/components/`、`frontend/contexts/`、`frontend/pages/`、`backend/`）都有一份 `AGENTS.md`，写该目录的文件清单、约定与坑；根 [AGENTS.md](AGENTS.md) 是总纲与目录导航。**改代码 / 改结构时，本文件与对应 `AGENTS.md` 要同步更新。**
 
 ---
 
@@ -161,6 +170,8 @@ CategoryContext / SettingsContext（缓存树形数据，操作后自动 refresh
 `type IN (SELECT code FROM tx_types WHERE category='expense')`；前端过滤统一用
 `expenseCodes.has(e.type)`（来自 `SettingsContext`）。**新写统计必须沿用此口径。**
 
+⚠️ **已知例外（改统计前先确认是否有意为之）**：`ExpenseCategoryGroup` 的「大类合计」只排除「不计」，**收入仍计入**；而日小计 `dayTotal` / 支付方式统计只算支出。同屏可能出现「日小计不含收入、大类合计含收入」。
+
 ---
 
 ## 6. 数据库表结构（唯一维护处：`frontend/data/database.ts`）
@@ -169,15 +180,20 @@ CategoryContext / SettingsContext（缓存树形数据，操作后自动 refresh
 |----|---------|------|
 | `expenses` | `id, amount, category_l1, category_l2, date, note, payment_method, type, is_non_daily, created_at` | 消费记录 |
 | `categories` | `id, name(UNIQUE), icon, sort_order, is_default` | 大类；`is_default`=是否参与「添加某天」自动记账 |
-| `subcategories` | `id, category_id(FK→categories, CASCADE), name, is_default, sort_order, default_note, default_payment_method, default_amount, default_type, default_is_non_daily` | 小类 + 记账默认模板（`default_*`） |
+| `subcategories` | `id, category_id(FK→categories, CASCADE), name, is_default, sort_order, default_note, default_payment_method, default_amount, default_type, default_is_non_daily` | 小类 + 公共属性模板（备注 / 支付方式 / 收支类型 / 日常）。⚠️ **金额不在这里**：`default_amount` 是历史遗留列（只作迁移 v2 的种子源，运行期无人读取），金额唯一来源是 `subcategory_rules` |
+| `subcategory_rules` | `id, subcategory_id(FK), sort_order, enabled, conditions(JSON), amount` | 小类条件规则：`sort_order` 即匹配优先级，`conditions='[]'` = 总是，`enabled=0` 跳过；**金额唯一来源** |
 | `budgets` | `id, month(UNIQUE), amount` | 月度预算 |
 | `payment_methods` | `id, name(UNIQUE), icon, sort_order` | 支付方式配置 |
 | `tx_types` | `id, code(UNIQUE), name, icon, category(expense/income/ignore), sort_order` | 收支类型配置 |
 | `month_attributes` | `month(PRIMARY KEY), is_locked` | 月份属性表（一月一行，当前仅有锁属性）；月锁生效时该月每天只读 |
 | `day_attributes` | `date(PRIMARY KEY), is_locked` | 日期属性表（一天一行，当前仅有锁属性）；解锁只置 0 保留行 |
+| `holidays` | `date(PRIMARY KEY), year, name, is_off_day` | 节假日特殊日期（**只存放假 + 调休补班**，`is_off_day=0` = 补班）；查不到按周一~周五 |
+| `holiday_years` | `year(PRIMARY KEY), ready, source, fetched_at, last_checked_at` | 每年一行：数据是否就绪 / 来源（`builtin` / `holiday-cn`）/ 最近一次联网检查时间（24 小时节流用） |
 
 - 建表用 `CREATE TABLE IF NOT EXISTS` + 兼容性 `ALTER TABLE`，**幂等**，旧库自动补列。
-- 迁移用 SQLite `PRAGMA user_version` 做一次性回填（如默认小类预设）。
+- 迁移用 SQLite `PRAGMA user_version` 做一次性回填：**v1** = 把早餐 / 午餐 / 晚餐回填为默认小类；**v2** = 按旧 `default_amount` 给默认小类生成一条「总是」规则（金额来源迁到 `subcategory_rules`）。执行后置位，不再重复跑。
+- 分类 / 支付方式 / 收支类型表在 `COUNT(*) === 0` 时播种（**删光重启会重新播种**，不是「只播一次」）。
+- 连接时把 5 类数据读进内存缓存并保持同步：`subRules`（规则）、`holidayDays` / `holidayYears`、`lockedMonths` / `lockedDays`。规则写操作后必须 `reloadSubRules()`。
 - **Rust 后端不建表**（`backend/src/lib.rs` 注释声明），schema 只此一处，避免前后端不一致。
 
 ---
@@ -187,7 +203,7 @@ CategoryContext / SettingsContext（缓存树形数据，操作后自动 refresh
 1. **本地日期**：一律用 `dateUtils.ts`（`localDateString` 等）。解析 `YYYY-MM-DD` 必须带 `T00:00:00`
    后缀按本地时间解析（`new Date('2026-07-01')` 按 UTC，西半球会错一天）。
 2. **金额**：入库前必须过 `calcUtils.evaluateExpression`（支持算式 `5*2`、拦截负数、四舍五入两位）。
-3. **行内编辑**：点格子进入 → 回车/点外部自动保存 → Esc 取消；下拉用 `InlineSelect`（WebView 兼容）。
+3. **行内编辑**：点格子进入 → 回车 / 点外部自动保存；**记录行内编辑没有 Esc 取消**（`ExpenseList` 的键盘处理只认 Enter），Esc 只在两个弹窗（`ConfirmDialog` / `EditExpenseDialog`）、`InlineSelect` 面板、分类改名与自定义小类输入框里生效。下拉用 `InlineSelect`（WebView 兼容，替代不可靠的原生 `showPicker()`）；金额一律过 `evaluateExpression`；编辑旧记录不自动填默认模板（模板只服务新建行）。
 4. **数据刷新信号**：`HomePage` 维护 `dataVersion`，列表增删改后自增，日历区/排行面板据此重新查库。
 5. **分类筛选键**：`catKey(l1, l2) = l1 + '§' + l2`（小类在不同大类下可能重名，必须组合键）。
 6. **CSV 导出**：`expensesToCSV` 带 BOM + 双引号转义，Excel 直接打开不乱码。
@@ -207,7 +223,17 @@ CategoryContext / SettingsContext（缓存树形数据，操作后自动 refresh
      （`autoConfirmNoSpendIfEmpty`）——「添加某天 → 删掉 ¥0 占位记录」收尾成「当天无消费」，不再退回「未记录」。仅运行时删除触发，老数据不批量补标记。
 10. **悬浮提示**：新增提示一律用 `components/HoverTip.tsx`（CSS 自绘，移入即显、移出即隐），不要再用原生 `title`
    （Tauri WebView 里要等约 1 秒、有时不弹）。贴近容器右边缘的元素传 `align="right"`，并给包裹层加 `shrink-0`。
-   历史遗留的原生 `title` 仍散落在日历格子、记录行徽章、分类/设置页图标按钮等处（约 40 处），尚未迁移，逐步替换。
+   历史遗留的原生 `title` 仍散落在日历格子、记录行徽章、分类/设置页图标按钮等处（全项目 57 处：components 35 + pages 22），尚未迁移，逐步替换。
+11. **小类条件规则（金额的唯一来源）**：`data/subcategoryRules.ts` 是纯函数层（`conditionsMatch` / `matchRulesAmount`），`database.ts` 把 `subcategory_rules` 整表读进内存缓存 `subRules`，导出**同步**函数 `matchSubcategoryAmount` / `resolveSubDefaults`。语义：**同一种条件多值 = 或、不同条件叠加 = 且**；`conditions=[]` = 总是；跳过 `enabled=0`；判定基准是**记录那天的日期**（不是今天）。
+    - 4 个「取默认值」入口统一调 `resolveSubDefaults`：批量入口（「添加某天」/「+ 大类」）没命中就**不生成记录**；手动入口（点小类 / 行内切小类）没命中给 0 元行。
+    - 勾选默认小类时若该小类一条规则都没有，自动补一条「总是 ¥0」（否则批量入口不会给它写记录）。
+12. **节假日 / 工作日判定**：`isWorkday` / `isRestDay` / `getHolidayName` 是**同步**函数（`holidayDays` / `holidayYears` 两个内存缓存在连接时载入）。表里只存特殊日期，查不到就按周一~周五——「该年没数据」与「该年确实没有特殊日期」走同一条路径。
+    - 数据由 `holidaySync.ts` 提供：首次安装导入 `lunar-javascript` 内置 2001–当年（离线可用），联网以 holiday-cn 静态 JSON 覆盖；同一年 24 小时内至多查一次、次年 10 月起才查、单次最多 4 年、空数据不算就绪、失败静默不阻塞功能。启动时 `Layout.tsx` 静默调一次 `ensureHolidayData()`。
+    - 日历格子的小字（`lunarUtils.ts`）直接读依赖库的 `HolidayUtil`，**不读 `holidays` 表**，与规则判定是两套数据源。
+13. **记账列表折叠（三档 / 自动预设 / 连续段）**：
+    - 三档 = 按天折叠（默认）→ 天展开 + 大类收起 → 全部展开；按钮一次走一档。**代码不记「当前第几档」**：`HomePage` 只发命令 `expandCommand={action, seq}`，`ExpenseList` 按实际 `expandedDates` + `collapsedMap` 算出下一步，再经 `onExpandControlsChange` 把「下一档是什么」回报给父页面。
+    - 金额筛选生效时套一次折叠预设 `expandPreset`（按天 = 一天一行 / 大类 = 一天一大类 / 单笔 = 全部展开），只在「条件 + 阈值」触发键变化时套用一次，之后用户手动折叠不受影响；**不要塞进 `searchActive`**（搜索是渲染期强制展开，语义不同）。
+    - 连续段折叠 `collectRunLayout()` 在 `ExpenseList.tsx` 顶部（纯函数，**模块内私有**，要单测需先 export）：未记账段 `q:` 与「当天无消费」段 `n:` 各自独立，段长 ≤3 全展示、>3 只留首尾两天 + 「+ 更多」。
 
 ---
 
@@ -219,17 +245,20 @@ CategoryContext / SettingsContext（缓存树形数据，操作后自动 refresh
 2. `types.ts`：`Expense` / `ExpenseInput` 加同名 snake_case 字段。
 3. `database.ts`：`addExpense` / `updateExpense` / `listExpenses`（SELECT 映射）同步。
 4. 界面：`ExpenseList.tsx` 行内编辑 + `EditExpenseDialog.tsx` 弹窗 + 需要时 CSV 导出列。
+5. 文档：同步 `frontend/data/AGENTS.md` 的「数据库表结构 / 文件清单」，必要时改本文件。
 
 ### 8.2 新增一个页面
 
 1. `pages/XxxPage.tsx`（命名 `XxxPage`）。
 2. `App.tsx` 注册路由。
 3. `Layout.tsx` 顶栏加导航入口。
+4. 文档：同步 `frontend/pages/AGENTS.md` 与本文件的目录树；根 [AGENTS.md](AGENTS.md) 的「目录导航 / 已实现功能」按需更新。
 
 ### 8.3 修改默认分类种子
 
 改 `frontend/data/categories.ts`。注意：**只对新装库的播种生效**；老库已有数据，
 要么走 `database.ts` 的 `user_version` 迁移，要么让用户在「分类管理」页手动改。
+⚠️ 种子里**没有小类金额**——金额由 `subcategory_rules` 的条件规则决定（见 §6），不要想着往种子或 `default_amount` 里加金额。
 
 ### 8.4 双形态注意
 

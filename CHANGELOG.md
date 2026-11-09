@@ -5,9 +5,22 @@
 - 写法参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本（SemVer）](https://semver.org/lang/zh-CN/)。
 - 每个版本按「新增 / 变更 / 修复 / 移除」分类，**最新版本排在最上面**。
 - 以 `git tag` 为准区分「已发布版本」与「未发布改动」；版本号以 `backend/tauri.conf.json` 为准。
-- 相关文档：[CLAUDE.md](CLAUDE.md)（产品需求 / 技术选型 / 当前状态）、[ARCHITECTURE.md](ARCHITECTURE.md)（架构 / 数据流 / 表结构）。
+- 相关文档：[AGENTS.md](AGENTS.md)（AI 指导总纲：产品需求 / 技术选型 / 当前状态 / 目录导航 + 各目录 `AGENTS.md`）、[ARCHITECTURE.md](ARCHITECTURE.md)（架构 / 数据流 / 表结构）。
 
 ---
+
+## [2.3.1] - 2026-11-09
+
+> 本次是**文档与工程说明**发布：无功能改动、无代码改动（`git diff` 只涉及 `.md` 与版本号）。
+
+### 变更
+- **AI 指导文档改为分层 `AGENTS.md` 体系**（根 `AGENTS.md` / `frontend/AGENTS.md` / `frontend/data/AGENTS.md` / `frontend/components/AGENTS.md` / `frontend/contexts/AGENTS.md` / `frontend/pages/AGENTS.md` / `backend/AGENTS.md`）：原根目录 `CLAUDE.md` 改名为 `AGENTS.md`，并拆薄成「项目总纲 + 目录导航 + 全局铁律 + 构建发版」；各核心代码目录新增自己的 `AGENTS.md`，写本目录的文件清单、约定、「为什么这么做」与改动检查清单，方便 AI 就近读取、减少上下文浪费。细节（如金额筛选、折叠档位、拖拽铁律）从根文件下沉到对应目录，根文件由 42.8KB 降到 19.4KB。
+- **修复 `ARCHITECTURE.md` 过期内容**（`ARCHITECTURE.md`）：
+  - 补齐数据库表结构：新增 `subcategory_rules`（小类条件规则，金额唯一来源）/ `holidays` / `holiday_years` 三张表；说明 `subcategories.default_amount` 已是历史遗留列（仅作迁移 v2 种子源）。
+  - 补齐目录树：`data/` 补 `subcategoryRules.ts` / `holidaySync.ts`；`components/` 补 `SubcategoryRuleList.tsx` / `RuleConditionPanel.tsx` / `HolidayStatusLine.tsx`。
+  - 纠正与代码不符的旧说法：支出日历**不是按金额分档的热力图**（凡有支出统一浅靛蓝底）；记录行内编辑**没有 Esc 取消**（只认 Enter）；原生 `title` 全项目 **57 处**（components 35 + pages 22），不是「约 40 处」；日历右侧卡片顺序为「上黄历卡、下双线图」。
+  - 补写三条关键实现模式：小类条件规则（同类多值 = 或、不同类 = 且、以记录那天判定、`resolveSubDefaults` 四个入口）、节假日 / 工作日同步判定（内置导入 + 联网覆盖 + 24 小时节流、失败静默）、记账列表折叠（三档 / `expandPreset` 自动预设 / `collectRunLayout` 连续段）。
+  - 标注一处**已知口径例外**：`ExpenseCategoryGroup` 的「大类合计」只排除「不计」，收入仍计入；日小计与支付方式统计只算支出（属既有行为，未改代码）。
 
 ## [未发布]
 
