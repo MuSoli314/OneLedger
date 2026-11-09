@@ -1,9 +1,10 @@
 import { createContext, useContext, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { localDateString } from '../data/dateUtils'
 import type { RangeMode } from '../data/types'
+import type { AmountFilterMode } from '../data/amountFilter'
 
 /**
- * 首页筛选状态（时间范围 + 支付方式筛选 + 分类筛选 + 趋势图大类）。
+ * 首页筛选状态（时间范围 + 支付方式筛选 + 分类筛选 + 金额筛选 + 趋势图大类）。
  * 提升到全局 Context：切换页面时 HomePage 组件会被卸载，放在组件内部的
  * useState 会随之销毁；放在这里则应用不关闭就一直保留，切页回来筛选不变。
  * 纯内存状态，关掉应用重开后恢复默认值。
@@ -22,12 +23,18 @@ interface HomeFilterContextValue {
   setDailyFilter: Dispatch<SetStateAction<'' | 'daily' | 'nonDaily'>>
   selectedCats: Set<string>
   setSelectedCats: Dispatch<SetStateAction<Set<string>>>
+  /** 金额筛选条件：'day' 按天合计（默认）| 'category' 按大类合计 | 'single' 单笔金额 */
+  amountFilterMode: AmountFilterMode
+  setAmountFilterMode: Dispatch<SetStateAction<AmountFilterMode>>
+  /** 金额筛选阈值输入值（字符串，'' = 不筛选；只允许数字 + 小数点，最多两位小数） */
+  amountFilterValue: string
+  setAmountFilterValue: Dispatch<SetStateAction<string>>
   trendCategory: string
   setTrendCategory: Dispatch<SetStateAction<string>>
   /** 记账列表是否显示缺失日期的「+ 添加」快捷行（默认开，关闭后列表更简洁） */
   showQuickAdd: boolean
   setShowQuickAdd: Dispatch<SetStateAction<boolean>>
-  /** 清理支付方式 + 日常/非日常 + 分类筛选（保留时间范围） */
+  /** 清理支付方式 + 日常/非日常 + 分类 + 金额筛选（保留时间范围；金额筛选条件回到默认「按天」） */
   clearFilters: () => void
 }
 
@@ -43,11 +50,16 @@ export function HomeFilterProvider({ children }: { children: ReactNode }) {
   const [selectedCats, setSelectedCats] = useState<Set<string>>(new Set())
   const [trendCategory, setTrendCategory] = useState('') // '' 表示「全天」（所有大类按月汇总）
   const [showQuickAdd, setShowQuickAdd] = useState(true) // 记账列表「+ 添加」快捷行开关（默认开）
+  // 金额筛选：条件默认「按天」，输入值为空 = 不筛选；输入非空且 > 0 才生效
+  const [amountFilterMode, setAmountFilterMode] = useState<AmountFilterMode>('day')
+  const [amountFilterValue, setAmountFilterValue] = useState('')
 
   const clearFilters = () => {
     setPaymentFilter('')
     setDailyFilter('')
     setSelectedCats(new Set())
+    setAmountFilterValue('')
+    setAmountFilterMode('day')
   }
 
   return (
@@ -65,6 +77,10 @@ export function HomeFilterProvider({ children }: { children: ReactNode }) {
         setDailyFilter,
         selectedCats,
         setSelectedCats,
+        amountFilterMode,
+        setAmountFilterMode,
+        amountFilterValue,
+        setAmountFilterValue,
         trendCategory,
         setTrendCategory,
         showQuickAdd,

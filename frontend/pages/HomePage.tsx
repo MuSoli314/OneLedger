@@ -5,6 +5,7 @@ import DatePicker from '../components/DatePicker'
 import DateRangePicker from '../components/DateRangePicker'
 import StatsPanel from '../components/StatsPanel'
 import MonthOverview from '../components/MonthOverview'
+import HoverTip from '../components/HoverTip'
 import {
   listExpenses,
   deleteExpense,
@@ -26,6 +27,7 @@ import {
   setDayLocked,
 } from '../data/database'
 import { localDateString, localMonthString, formatMonth, getRangeDates, eachDay } from '../data/dateUtils'
+import { applyAmountFilter, parseAmountThreshold, sanitizeAmountInput, type AmountFilterMode } from '../data/amountFilter'
 import { useSettings } from '../contexts/SettingsContext'
 import { useCategories } from '../contexts/CategoryContext'
 import { useHomeFilter } from '../contexts/HomeFilterContext'
@@ -49,6 +51,8 @@ export default function HomePage() {
     paymentFilter, setPaymentFilter,
     dailyFilter, setDailyFilter,
     selectedCats, setSelectedCats,
+    amountFilterMode, setAmountFilterMode,
+    amountFilterValue, setAmountFilterValue,
     showQuickAdd, setShowQuickAdd,
     clearFilters,
   } = useHomeFilter()
@@ -84,6 +88,25 @@ export default function HomePage() {
   // 列表搜索关键字（匹配金额 / 备注，子串匹配不区分大小写）
   const [searchQuery, setSearchQuery] = useState('')
   const searchActive = searchQuery.trim() !== ''
+
+  // 金额筛选阈值：输入非空且 > 0 才生效（记录金额都是非负数，>= 0 等于不筛选）
+  const amountThreshold = useMemo(() => parseAmountThreshold(amountFilterValue), [amountFilterValue])
+  const amountFilterActive = amountThreshold !== null
+
+  // 金额筛选输入：只保留数字 + 一个小数点，小数最多两位（筛选框只认纯数字，不接受算式）
+  const handleAmountFilterInput = (raw: string) => setAmountFilterValue(sanitizeAmountInput(raw))
+
+  // 金额筛选的「列表展开预设」（ExpenseList 只在条件/阈值变化时套用一次，之后仍可手动折叠/展开）：
+  //   按天 = 所有天折叠（一行 = 一天）；大类 = 天展开、大类折叠（看到每天每类合计）；单笔 = 全部展开（看单条记录）
+  const amountExpandPreset: 'collapseDays' | 'expandDaysCollapseL1' | 'expandAll' | undefined =
+    !amountFilterActive
+      ? undefined
+      : amountFilterMode === 'day'
+        ? 'collapseDays'
+        : amountFilterMode === 'category'
+          ? 'expandDaysCollapseL1'
+          : 'expandAll'
+  const amountExpandKey = amountFilterActive ? `${amountFilterMode}:${amountThreshold}` : ''
 
   const thisMonth = localMonthString()
 
@@ -192,8 +215,8 @@ export default function HomePage() {
   // 任何时间范围（近一周 / 近一月 / 本月 / 上月 / 历史月份 / 自定义）下缺失记录的日期——
   // 列表里为这些日期补「+ 添加」快捷行。缺的日期会一并落入某段缺失区间：[prev+1, next-1]，
   // 其中的两端（挨着已有日期）补快捷。
-  // 有筛选（支付方式 / 分类 / 搜索）时不补缺失日期快捷行（列表聚焦筛选结果）
-  const hasAnyFilter = !!paymentFilter || !!dailyFilter || selectedCats.size > 0 || searchActive
+  // 有筛选（支付方式 / 分类 / 日常 / 金额 / 搜索）时不补缺失日期快捷行（列表聚焦筛选结果）
+  const hasAnyFilter = !!paymentFilter || !!dailyFilter || selectedCats.size > 0 || searchActive || amountFilterActive
   const missingDates = useMemo(() => {
     if (hasAnyFilter) return []
     const existing = new Set(expenses.map((e) => e.date))
@@ -504,8 +527,13 @@ export default function HomePage() {
         return String(e.amount).includes(q) || e.amount.toFixed(2).includes(q)
       })
     }
+    // 金额筛选（与上面所有筛选叠加，统计基数是「已筛选后的列表」，所以组合语义是：
+    // 在支付方式/日常/分类/搜索结果里，再按金额门槛保留；具体口径见 data/amountFilter.ts）
+    if (amountThreshold !== null) {
+      list = applyAmountFilter(list, amountFilterMode, amountThreshold, (type) => expenseCodes.has(type))
+    }
     return list
-  }, [expenses, paymentFilter, dailyFilter, selectedCats, searchQuery])
+  }, [expenses, paymentFilter, dailyFilter, selectedCats, searchQuery, amountThreshold, amountFilterMode, expenseCodes])
 
   // 支付方式统计（只统计支出，与卡片总支出 ¥expenseTotal 口径一致；金额按从高到低排序）
   const paymentTotals = useMemo(() => {
@@ -868,36 +896,85 @@ export default function HomePage() {
             <div className="text-center py-16 text-slate-400 text-sm">加载中...</div>
           ) : (
             <div className="space-y-4">
-              {/* 记账列表标题 + 搜索框 + 快捷添加开关（开关关闭时隐藏缺失日期的「+ 添加」快捷行） */}
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="inline-flex items-center gap-1 text-sm font-medium text-emerald-700 bg-emerald-100/90 rounded-full px-2.5 h-9">📝 记账列表</span>
-                <div className="relative flex-1 min-w-0">
-                <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
-                </svg>
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="搜索金额或备注"
-                  className="w-full h-9 pl-9 pr-8 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 shadow-sm placeholder:text-slate-400 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-colors"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
-                    title="清空搜索"
+              {/* 记账列表标题 + 搜索框 + 金额筛选 + 快捷添加开关（开关关闭时隐藏缺失日期的「+ 添加」快捷行） */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="inline-flex items-center gap-1 text-sm font-medium text-emerald-700 bg-emerald-100/90 rounded-full px-2.5 h-9 shrink-0">📝 记账列表</span>
+                {/* 搜索框：只留一小段宽度（原来 flex-1 铺满整行），给右侧金额筛选腾位置 */}
+                <div className="relative flex-1 min-w-36 max-w-[220px]">
+                  <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
+                  </svg>
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="搜索金额或备注"
+                    className="w-full h-9 pl-9 pr-8 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 shadow-sm placeholder:text-slate-400 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 transition-colors"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                      aria-label="清空搜索"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+                {/* 金额筛选：条件下拉（按天 = 当天合计 / 大类 = 该大类合计 / 单笔 = 单条记录金额）+ ≥ + 数字输入。
+                    输入为空或 0 = 不筛选；生效时边框高亮，可直接点输入框里的 ✕ 清空 */}
+                <HoverTip
+                  text="金额筛选：按天 = 当天合计 ≥ 输入值；大类 = 该大类合计；单笔 = 单条记录金额"
+                  className="shrink-0"
+                >
+                  <div
+                    className={`flex items-center gap-1 h-9 rounded-xl border bg-white shadow-sm pl-1.5 pr-1 transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 ${
+                      amountFilterActive ? 'border-primary/60' : 'border-slate-200'
+                    }`}
                   >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                )}
-              </div>
+                    <select
+                      value={amountFilterMode}
+                      onChange={(e) => setAmountFilterMode(e.target.value as AmountFilterMode)}
+                      aria-label="金额筛选条件"
+                      className="h-7 rounded-lg bg-transparent px-0.5 text-xs text-slate-600 focus:outline-none cursor-pointer"
+                    >
+                      <option value="day">按天</option>
+                      <option value="category">大类</option>
+                      <option value="single">单笔</option>
+                    </select>
+                    <span className="text-xs text-slate-400 select-none">≥</span>
+                    <div className="relative">
+                      <input
+                        value={amountFilterValue}
+                        onChange={(e) => handleAmountFilterInput(e.target.value)}
+                        inputMode="decimal"
+                        placeholder="金额"
+                        aria-label="金额筛选阈值"
+                        className={`h-7 w-16 rounded-lg bg-transparent pl-1 text-sm tabular-nums text-slate-700 placeholder:text-xs placeholder:text-slate-400 focus:outline-none ${
+                          amountFilterValue ? 'pr-5' : 'pr-1'
+                        }`}
+                      />
+                      {amountFilterValue && (
+                        <button
+                          type="button"
+                          onClick={() => setAmountFilterValue('')}
+                          className="absolute right-0.5 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                          aria-label="清空金额筛选"
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </HoverTip>
                 {/* 快捷添加开关：控制缺失日期「+ 添加」快捷行的显隐（悬浮气泡说明显示条件与功能；
                     原生 title 在 Tauri WebView 不显示，沿用黄历卡的自定义气泡方案；
-                    任一筛选（支付方式/日常/分类/搜索）生效时快捷行不显示，按钮整体置灰不可点） */}
-                <div className="relative group shrink-0">
+                    任一筛选（支付方式/日常/分类/金额/搜索）生效时快捷行不显示，按钮整体置灰不可点） */}
+                <div className="relative group shrink-0 ml-auto">
                   <button
                     type="button"
                     onClick={() => !hasAnyFilter && setShowQuickAdd((v) => !v)}
@@ -919,7 +996,7 @@ export default function HomePage() {
                   <div className="pointer-events-none absolute right-0 top-full mt-2 z-30 hidden group-hover:block w-max whitespace-nowrap bg-slate-800/95 text-white text-xs leading-relaxed rounded-lg px-3 py-2.5 shadow-lg">
                     <div>为当前时间范围内没有记录的日期补「+添加」快捷行。</div>
                     <div className="mt-1.5">已锁定（确认）的空白天会显示为「当天无消费」，始终可见。</div>
-                    <div className="mt-1.5">开启支付方式/日常/分类筛选或搜索时无效。</div>
+                    <div className="mt-1.5">开启支付方式/日常/分类/金额筛选或搜索时无效。</div>
                   </div>
                 </div>
               </div>
@@ -935,8 +1012,10 @@ export default function HomePage() {
                 onAddDate={saveNewDate}
                 onDeleteDate={handleDeleteDate}
                 onDeleteCategory={handleDeleteCategory}
-                hasFilter={!!paymentFilter || !!dailyFilter || hasCategoryFilter || searchActive}
+                hasFilter={!!paymentFilter || !!dailyFilter || hasCategoryFilter || searchActive || amountFilterActive}
                 searchActive={searchActive}
+                expandPreset={amountExpandPreset}
+                expandPresetKey={amountExpandKey}
                 lockedMonths={lockedMonths}
                 lockedDays={lockedDays}
                 onToggleDayLock={handleToggleDayLock}
@@ -957,6 +1036,7 @@ export default function HomePage() {
             onToggleSubCategory={toggleSubCategory}
             onClearFilters={clearFilters}
             paymentFilter={paymentFilter}
+            amountFilterActive={amountFilterActive}
           />
         </div>
       </div>

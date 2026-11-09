@@ -13,10 +13,11 @@ interface Props {
   onToggleSubCategory: (l1: string, l2: string) => void
   onClearFilters: () => void
   paymentFilter: string // 支付方式筛选（'' 表示未筛选，用于展示清除筛选按钮）
+  amountFilterActive?: boolean // 金额筛选是否生效（仅用于展示「清除筛选」按钮，统计排行本身不受金额筛选影响）
 }
 
 // 右栏统计面板：分类排行（原「当月支出图」已移到记账模块顶部的日历区，见 MonthOverview）
-export default function StatsPanel({ startDate, endDate, dataVersion, selectedCats, isCatSelected, onToggleCategory, onToggleSubCategory, onClearFilters, paymentFilter }: Props) {
+export default function StatsPanel({ startDate, endDate, dataVersion, selectedCats, isCatSelected, onToggleCategory, onToggleSubCategory, onClearFilters, paymentFilter, amountFilterActive = false }: Props) {
   const { categories } = useCategories()
   const [stats, setStats] = useState<MonthlyStats | null>(null)
   // 分类排行展开状态：默认全部折叠，点击大类可展开查看小类金额
@@ -42,12 +43,12 @@ export default function StatsPanel({ startDate, endDate, dataVersion, selectedCa
     <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
       <div className="flex items-center justify-between mb-4">
         <span className="inline-flex items-center gap-1 text-sm font-medium text-violet-700 bg-violet-100/90 rounded-full px-2.5 py-1">🏆 分类排行</span>
-        {(selectedCats.size > 0 || paymentFilter) && (
+        {(selectedCats.size > 0 || paymentFilter || amountFilterActive) && (
           <button
             type="button"
             onClick={onClearFilters}
             className="text-xs text-primary hover:bg-primary/5 rounded-lg px-2 py-1 transition-colors"
-            title="清除支付方式和分类筛选"
+            title="清除支付方式、分类和金额筛选"
           >
             ✕ 清除筛选
           </button>

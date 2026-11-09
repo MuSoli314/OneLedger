@@ -52,6 +52,7 @@ frontend/
 │   ├── webDb.ts           #   网页版数据层：sql.js + IndexedDB + isTauri() 判定
 │   ├── dateUtils.ts       #   本地日期工具（杜绝 UTC 时区 Bug）
 │   ├── calcUtils.ts       #   金额算式解析（+ - * / 括号，递归下降，无 eval）
+│   ├── amountFilter.ts    #   记账列表金额筛选：按天/大类/单笔 + ≥ 阈值（纯函数，含输入净化）
 │   ├── reorderUtils.ts    #   拖拽重排工具（按 id 列表重排数组，乐观更新用，纯函数）
 │   ├── lunarUtils.ts      #   农历/节气/节日/黄历（缓存计算结果）
 │   ├── emojis.ts          #   emoji 候选列表（分类/设置共用）
@@ -59,7 +60,7 @@ frontend/
 ├── contexts/              # 「状态层」：全局共享状态（不直接写 SQL）
 │   ├── CategoryContext.tsx    #   分类树缓存 + 分类增删改/排序封装（操作后自动 refresh）
 │   ├── SettingsContext.tsx    #   支付方式/收支类型配置 + 统计口径（expenseCodes）
-│   └── HomeFilterContext.tsx  #   首页筛选状态（切页保留，纯内存）
+│   └── HomeFilterContext.tsx  #   首页筛选状态（时间范围/支付方式/分类/金额筛选，切页保留，纯内存）
 ├── components/            # 「视图层」：通用与业务组件
 │   ├── Layout.tsx             #   顶栏导航 + 路由出口
 │   ├── MonthOverview.tsx      #   记账页顶部：支出日历(1/3) + 黄历卡 + 按天趋势图(2/3)

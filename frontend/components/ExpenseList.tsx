@@ -30,10 +30,20 @@ interface Props {
   onAddDate?: (date: string) => void
   onDeleteDate?: (date: string) => void
   onDeleteCategory?: (date: string, category_l1: string) => void
-  // 是否正在筛选（支付方式/分类），仅影响空状态文案
+  // 是否正在筛选（支付方式/分类/日常/金额/搜索），仅影响空状态文案
   hasFilter?: boolean
   /** 搜索中：强制展开所有日期分组与大类分组，让命中的记录（含备注）直接可见 */
   searchActive?: boolean
+  /**
+   * 金额筛选带来的「展开预设」（只在预设/触发键变化时套用一次，之后用户仍可手动折叠/展开）：
+   * - collapseDays：全部天折叠（一行 = 一天，按天筛选用）
+   * - expandDaysCollapseL1：天全部展开、每个大类折叠（一行 = 一天内一个大类，大类筛选用）
+   * - expandAll：天 + 大类全部展开（看单条记录，单笔筛选用）
+   * 不传 = 不干预（保留用户当前折叠状态）
+   */
+  expandPreset?: 'collapseDays' | 'expandDaysCollapseL1' | 'expandAll'
+  /** 展开预设的触发键（如 `day:100`）：值变化时重新套用一次预设；阈值/条件不变就不动用户手动状态 */
+  expandPresetKey?: string
   /** 月锁集合（YYYY-MM）：某月已锁 → 该月每天都是锁定的（含未来日期） */
   lockedMonths?: Set<string>
   /** 日锁集合（YYYY-MM-DD） */
@@ -107,7 +117,7 @@ function collectRunLayout(
   }
 }
 
-export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull, onRefresh, extraDates, autoExpandDates, missingDates, onAddDate, onDeleteDate, onDeleteCategory, hasFilter, searchActive, lockedMonths, lockedDays, onToggleDayLock }: Props) {
+export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull, onRefresh, extraDates, autoExpandDates, missingDates, onAddDate, onDeleteDate, onDeleteCategory, hasFilter, searchActive, expandPreset, expandPresetKey, lockedMonths, lockedDays, onToggleDayLock }: Props) {
   const { categories, addSubCategory, addCategory } = useCategories()
   const { paymentMethods, txTypes, defaultExpenseCode } = useSettings()
   const [collapsedMap, setCollapsedMap] = useState<Set<string>>(new Set())
@@ -156,6 +166,38 @@ export default function ExpenseList({ expenses, onDelete, onUpdate, onUpdateFull
       return next
     })
   }
+
+  // 金额筛选切换时套用展开预设：按天 = 全部天折叠；大类 = 天展开 + 大类折叠；单笔 = 全部展开。
+  // 只在「条件/阈值的触发键」变化时套用一次，之后用户手动点日期/大类标题照常折叠、展开
+  // （所以这里改的是 state，不用 searchActive 那种渲染期强制覆盖）。
+  const lastExpandPresetKey = useRef('')
+  useEffect(() => {
+    if (!expandPreset) {
+      lastExpandPresetKey.current = ''
+      return
+    }
+    const key = `${expandPreset}|${expandPresetKey ?? ''}`
+    if (lastExpandPresetKey.current === key) return
+    lastExpandPresetKey.current = key
+    if (expandPreset === 'collapseDays') {
+      setExpandedDates(new Set())
+      setCollapsedMap(new Set())
+      return
+    }
+    // 金额筛选生效时列表只保留命中的天，这里的日期集合就是会被渲染的那批天
+    const allDates = new Set<string>()
+    for (const e of expenses) allDates.add(e.date)
+    for (const d of extraDates || []) allDates.add(d)
+    for (const d of missingDates || []) allDates.add(d)
+    setExpandedDates(allDates)
+    if (expandPreset === 'expandAll') {
+      setCollapsedMap(new Set())
+    } else {
+      const collapsed = new Set<string>()
+      for (const e of expenses) collapsed.add(`${e.date}|${e.category_l1}`)
+      setCollapsedMap(collapsed)
+    }
+  }, [expandPreset, expandPresetKey, expenses, extraDates, missingDates])
 
   // 展开/收起连续缺失段（「+ 更多」）
   const toggleRunCollapse = (runId: string) => {
