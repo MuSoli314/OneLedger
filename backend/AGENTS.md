@@ -28,7 +28,7 @@ Tauri 2 的 **Rust 外壳 + 打包配置**。打开一个系统窗口、加载 `
 | 字段 | 值 | 说明 |
 |---|---|---|
 | `productName` | `OneLedger` | **必须英文**：Windows MSI 打包工具（WiX）不支持中文文件名，改中文会导致打包失败 |
-| `version` | 当前 `2.3.1` | **发版唯一权威版本号**，Tauri 打包以此为准 |
+| `version` | 当前 `2.4.0` | **发版唯一权威版本号**，Tauri 打包以此为准 |
 | `identifier` | `com.oneledger.accounting` | 应用唯一标识，别改（改了等于换一个 App，数据目录可能变） |
 | `build.frontendDist` | `../dist` | 打正式包时加载 `npm run build` 的产物 |
 | `build.devUrl` | `http://localhost:5173` | 开发模式地址，与 `vite.config.ts` 的 `strictPort` 对应 |

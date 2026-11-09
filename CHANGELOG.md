@@ -9,20 +9,9 @@
 
 ---
 
-## [2.3.1] - 2026-11-09
+## [2.4.0] - 2026-11-09
 
-> 本次是**文档与工程说明**发布：无功能改动、无代码改动（`git diff` 只涉及 `.md` 与版本号）。
-
-### 变更
-- **AI 指导文档改为分层 `AGENTS.md` 体系**（根 `AGENTS.md` / `frontend/AGENTS.md` / `frontend/data/AGENTS.md` / `frontend/components/AGENTS.md` / `frontend/contexts/AGENTS.md` / `frontend/pages/AGENTS.md` / `backend/AGENTS.md`）：原根目录 `CLAUDE.md` 改名为 `AGENTS.md`，并拆薄成「项目总纲 + 目录导航 + 全局铁律 + 构建发版」；各核心代码目录新增自己的 `AGENTS.md`，写本目录的文件清单、约定、「为什么这么做」与改动检查清单，方便 AI 就近读取、减少上下文浪费。细节（如金额筛选、折叠档位、拖拽铁律）从根文件下沉到对应目录，根文件由 42.8KB 降到 19.4KB。
-- **修复 `ARCHITECTURE.md` 过期内容**（`ARCHITECTURE.md`）：
-  - 补齐数据库表结构：新增 `subcategory_rules`（小类条件规则，金额唯一来源）/ `holidays` / `holiday_years` 三张表；说明 `subcategories.default_amount` 已是历史遗留列（仅作迁移 v2 种子源）。
-  - 补齐目录树：`data/` 补 `subcategoryRules.ts` / `holidaySync.ts`；`components/` 补 `SubcategoryRuleList.tsx` / `RuleConditionPanel.tsx` / `HolidayStatusLine.tsx`。
-  - 纠正与代码不符的旧说法：支出日历**不是按金额分档的热力图**（凡有支出统一浅靛蓝底）；记录行内编辑**没有 Esc 取消**（只认 Enter）；原生 `title` 全项目 **57 处**（components 35 + pages 22），不是「约 40 处」；日历右侧卡片顺序为「上黄历卡、下双线图」。
-  - 补写三条关键实现模式：小类条件规则（同类多值 = 或、不同类 = 且、以记录那天判定、`resolveSubDefaults` 四个入口）、节假日 / 工作日同步判定（内置导入 + 联网覆盖 + 24 小时节流、失败静默）、记账列表折叠（三档 / `expandPreset` 自动预设 / `collectRunLayout` 连续段）。
-  - 标注一处**已知口径例外**：`ExpenseCategoryGroup` 的「大类合计」只排除「不计」，收入仍计入；日小计与支付方式统计只算支出（属既有行为，未改代码）。
-
-## [未发布]
+> 本轮为 2026-11-07 ~ 2026-11-09 的功能改动：小类默认值升级为**条件规则**、新增**节假日数据**、记账列表**金额筛选 + 折叠/展开按钮**、行内「＋ 自定义」小类，以及删空某天自动收尾成「当天无消费」；另修复列表「大类合计」口径与日小计不一致的问题。
 
 ### 新增
 - **小类默认值 → 条件规则**（`database.ts` / `types.ts` / `subcategoryRules.ts`（新增）/ `CategoryPage.tsx` / `SortableSubCategoryRow.tsx` / `SubcategoryRuleList.tsx`（新增）/ `RuleConditionPanel.tsx`（新增）/ `CategoryContext.tsx` / `HomePage.tsx` / `ExpenseList.tsx` / `ExpenseRow.tsx`）：
@@ -61,9 +50,25 @@
 - **记录行内「小类」下拉第一行支持「＋ 自定义」**（`ExpenseRow.tsx` / `ExpenseCategoryGroup.tsx` / `ExpenseList.tsx`）：点「添加小类」（或点某条记录的小类格子进入编辑）弹出的下拉里，第一行固定是「＋ 自定义」；点它该格子变成输入框，输入名字回车即把该名字存为新小类（已存在同名直接复用，不重复创建），并立刻把它选为这条记录的小类——新增行照常带出模板默认值（新小类无模板则为空），已有记录选完即保存。此前只能先在大类弹出面板（`CategoryAddPopover`）里建小类，或去分类管理页添加。
 
 ### 修复
-- **记账列表「大类合计」口径统一为只算支出**（`ExpenseCategoryGroup.tsx`）：原来一天里「日期小计」只算支出，而下面每个「大类合计」只排除「不计」、把**收入**也算进去，同一个屏幕出现两套口径——例如某天在「餐饮饮食」记一笔 ¥15 支出 + 一笔 ¥200 收入，日期行显示「合计 ¥15.00 · 2笔」、大类行显示「合计 ¥215.00」。现在大类合计与日小计、蓝色卡、日历、右栏排行、金额筛选（按天 / 按大类门槛）全部统一为「只算 `expense`」，所以**一天里各大类合计之和 = 当天小计**，金额筛选看到的合计与筛选结果也不会再互相矛盾。收入 / 不计记录照常显示在列表里，只是不参与合计，笔数照常统计。（`HomePage.tsx` / `database.ts`）：点「添加某天」时，命中「总是」规则的小类（默认早餐 / 午餐 / 晚餐）会先写成一批 ¥0 占位记录，这天立刻变成「已记账」；如果这天其实没花钱，用户就会把这些占位记录（整个大类、或整天）删光——旧版删光后这天直接退回「未记录」的「+ 添加」快捷行，看起来像刚才的「添加」白做了，而「无消费」只能靠一个很小的 🔓 图标去锁定（快捷行被折叠/关闭时甚至找不到），于是这一天「完成不了」。
+- **记账列表「大类合计」口径统一为只算支出**（`ExpenseCategoryGroup.tsx`）：原来一天里「日期小计」只算支出，而下面每个「大类合计」只排除「不计」、把**收入**也算进去，同一个屏幕出现两套口径——例如某天在「餐饮饮食」记一笔 ¥15 支出 + 一笔 ¥200 收入，日期行显示「合计 ¥15.00 · 2笔」、大类行显示「合计 ¥215.00」。现在大类合计与日小计、蓝色卡、日历、右栏排行、金额筛选（按天 / 按大类门槛）全部统一为「只算 `expense`」，所以**一天里各大类合计之和 = 当天小计**，金额筛选看到的合计与筛选结果也不会再互相矛盾。收入 / 不计记录照常显示在列表里，只是不参与合计，笔数照常统计。
+- **删光某天记录后无法收尾成「当天无消费」**（`HomePage.tsx` / `database.ts`）：点「添加某天」时，命中「总是」规则的小类（默认早餐 / 午餐 / 晚餐）会先写成一批 ¥0 占位记录，这天立刻变成「已记账」；如果这天其实没花钱，用户就会把这些占位记录（整个大类、或整天）删光——旧版删光后这天直接退回「未记录」的「+ 添加」快捷行，看起来像刚才的「添加」白做了，而「无消费」只能靠一个很小的 🔓 图标去锁定（快捷行被折叠/关闭时甚至找不到），于是这一天「完成不了」。
   - 现在三条删除路径（删单条记录 `deleteExpense` / 删整天 `deleteExpensesByDate` / 删整个大类 `deleteExpensesByCategory`）删完后都会用新增的 `countExpensesByDate(date)` 查一下这天是否已一条不剩；**删空即自动给这天补上日锁**（`autoConfirmNoSpendIfEmpty`），列表里就地显示为一行「当天无消费」，流程完成闭环。
   - 自动标记只在**运行时删除**时发生，升级老库不会批量补标记；想继续补记点 🔒 解锁即可，数据可逆，不加任何确认弹窗。
+
+---
+
+## [2.3.1] - 2026-11-09
+
+> 本次是**文档与工程说明**发布：无功能改动、无代码改动（`git diff` 只涉及 `.md` 与版本号）。
+
+### 变更
+- **AI 指导文档改为分层 `AGENTS.md` 体系**（根 `AGENTS.md` / `frontend/AGENTS.md` / `frontend/data/AGENTS.md` / `frontend/components/AGENTS.md` / `frontend/contexts/AGENTS.md` / `frontend/pages/AGENTS.md` / `backend/AGENTS.md`）：原根目录 `CLAUDE.md` 改名为 `AGENTS.md`，并拆薄成「项目总纲 + 目录导航 + 全局铁律 + 构建发版」；各核心代码目录新增自己的 `AGENTS.md`，写本目录的文件清单、约定、「为什么这么做」与改动检查清单，方便 AI 就近读取、减少上下文浪费。细节（如金额筛选、折叠档位、拖拽铁律）从根文件下沉到对应目录，根文件由 42.8KB 降到 19.4KB。
+- **修复 `ARCHITECTURE.md` 过期内容**（`ARCHITECTURE.md`）：
+  - 补齐数据库表结构：新增 `subcategory_rules`（小类条件规则，金额唯一来源）/ `holidays` / `holiday_years` 三张表；说明 `subcategories.default_amount` 已是历史遗留列（仅作迁移 v2 种子源）。
+  - 补齐目录树：`data/` 补 `subcategoryRules.ts` / `holidaySync.ts`；`components/` 补 `SubcategoryRuleList.tsx` / `RuleConditionPanel.tsx` / `HolidayStatusLine.tsx`。
+  - 纠正与代码不符的旧说法：支出日历**不是按金额分档的热力图**（凡有支出统一浅靛蓝底）；记录行内编辑**没有 Esc 取消**（只认 Enter）；原生 `title` 全项目 **57 处**（components 35 + pages 22），不是「约 40 处」；日历右侧卡片顺序为「上黄历卡、下双线图」。
+  - 补写三条关键实现模式：小类条件规则（同类多值 = 或、不同类 = 且、以记录那天判定、`resolveSubDefaults` 四个入口）、节假日 / 工作日同步判定（内置导入 + 联网覆盖 + 24 小时节流、失败静默）、记账列表折叠（三档 / `expandPreset` 自动预设 / `collectRunLayout` 连续段）。
+  - 标注一处**已知口径例外**：`ExpenseCategoryGroup` 的「大类合计」只排除「不计」，收入仍计入；日小计与支付方式统计只算支出（属本次发布时的既有行为，当时未改代码；该不一致已在 **2.4.0** 修复，见上文 2.4.0 的「修复」）。
 
 ---
 

@@ -14,7 +14,7 @@
 |---|---|
 | 是什么 | Windows / macOS 桌面记账应用「一笔」，个人日常消费记录与支出管理 |
 | 技术形态 | Tauri 2 外壳 + React 19 + TypeScript + SQLite；同一套前端另跑网页版（sql.js + IndexedDB） |
-| 当前版本 | v2.3.1（唯一权威：`backend/tauri.conf.json` 的 `version`） |
+| 当前版本 | v2.4.0（唯一权威：`backend/tauri.conf.json` 的 `version`） |
 | 桌面版跑起来 | `npm run tauri:dev` |
 | 浏览器里跑起来 | `npm run dev` |
 | 数据存哪 | 桌面版：本地 SQLite 文件 `one_ledger.db`；网页版：浏览器 IndexedDB。**两者不互通** |
