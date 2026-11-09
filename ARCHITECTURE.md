@@ -170,7 +170,7 @@ CategoryContext / SettingsContext（缓存树形数据，操作后自动 refresh
 `type IN (SELECT code FROM tx_types WHERE category='expense')`；前端过滤统一用
 `expenseCodes.has(e.type)`（来自 `SettingsContext`）。**新写统计必须沿用此口径。**
 
-⚠️ **已知例外（改统计前先确认是否有意为之）**：`ExpenseCategoryGroup` 的「大类合计」只排除「不计」，**收入仍计入**；而日小计 `dayTotal` / 支付方式统计只算支出。同屏可能出现「日小计不含收入、大类合计含收入」。
+**无例外**：同屏的「每日小计」（`ExpenseList` 的 `dayTotal`）、「大类合计」（`ExpenseCategoryGroup` 的 `l1Total`）、支付方式统计都只算支出，所以「一天里各大类合计之和 = 当天小计」（不计 / 收入记录照常显示在列表里，但不参与任何合计）。金额筛选的「按天 / 按大类」也用同一口径判断阈值，看到的合计与筛选结果不会互相矛盾。
 
 ---
 

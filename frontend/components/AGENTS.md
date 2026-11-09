@@ -26,7 +26,7 @@
 |---|---|---|
 | `ExpenseList.tsx` | 列表主组件（1100 行，本目录最大）：按日期倒序分组、缺失日期「+ 添加」快捷行、「当天无消费」只读行、行内编辑状态机、完整编辑弹窗入口、三档折叠/展开、金额筛选预设、连续段折叠 | 真实记录 + 临时行 + 空白日期合并后统一渲染；折叠与编辑状态都在这里；`collectRunLayout()` 在文件顶部（纯函数）；筛选**不**在这里做 |
 | `ExpenseRow.tsx` | 单条记录行：日常/非日常徽章、小类、金额、支付方式、收支类型、备注、编辑弹窗按钮、删除 | 金额颜色按收支类型（支出红 / 收入绿 / 不计灰）；0 元且非 ignore → 整行标红提醒补金额；`readOnly` 时全部只读；小类下拉首行「＋ 自定义」（哨兵值 `\u0000custom-sub`）切输入框 |
-| `ExpenseCategoryGroup.tsx` | 一天里的一级大类分组：标题行（折叠、笔数、合计、删除整组）+ 记录行 +「添加小类」 | 折叠 key = `date` 与 `l1` 用竖线拼接；搜索中强制展开；大类合计**只排除 ignore**（收入仍计入，与日小计口径不同）；组内小类顺序取分类管理顺序 |
+| `ExpenseCategoryGroup.tsx` | 一天里的一级大类分组：标题行（折叠、笔数、合计、删除整组）+ 记录行 +「添加小类」 | 折叠 key = `date` 与 `l1` 用竖线拼接；搜索中强制展开；大类合计与日小计同口径（**只算 `expense`**，收入 / 不计不参与）；组内小类顺序取分类管理顺序 |
 | `CategoryAddPopover.tsx` | 「+ 添加」弹出的大类 / 小类两列联动面板 | 受控组件（悬停大类、自定义输入等状态都在 ExpenseList）；当天已有大类置灰「已有」；支持自定义大类 / 小类（回车确认、Esc 取消） |
 | `PaymentMethodTotals.tsx` | 每日支付方式金额徽章 | 只累计 `category === 'expense'` 的记录；按设置页顺序、金额 > 0 才显示；桌面 `hidden sm:flex` / 移动 `sm:hidden` 由 `className` 切换；自带悬浮气泡，未走 HoverTip |
 | `EditExpenseDialog.tsx` | 记录完整编辑弹窗（含日期，日期录错不用删了重记） | 左侧 inline `DatePicker` + 右侧字段；金额走 `evaluateExpression`；Esc 关闭；保存调 `onSave(id, ExpenseInput)`，成功后父组件展开目标日期 |
@@ -129,8 +129,7 @@
 
 ### 9. 数据口径与刷新
 
-- **统计只算 expense**：日小计 `dayTotal`、`PaymentMethodTotals` 只累计 `txTypeByCode.get(type)?.category === 'expense'`，收入与「不计」不参与。
-- **已知不一致（改统计前先确认）**：`ExpenseCategoryGroup` 的大类合计只排除 `ignore`（收入仍计入），与日小计 / 全局统计口径不同。
+- **统计只算 expense（含列表内的大类合计）**：日小计 `dayTotal`、大类合计 `l1Total`、`PaymentMethodTotals` 都只累计 `txTypeByCode.get(type)?.category === 'expense'`，收入与「不计」不参与。所以「一天里各大类合计之和 = 当天小计」，与金额筛选（`applyAmountFilter` 的按天 / 大类门槛）也一致。（历史上 `l1Total` 只排除 `ignore`、把收入算进去，已统一。）
 - 排序基准：每天的大类顺序用 `categories.findIndex`，组内小类顺序用 `categories` 里 `children` 的顺序。
 - 组件不缓存业务数据：写操作完成后调 `onRefresh()`，由父页面自增 `dataVersion` 触发重新查库；`MonthOverview` / `StatsPanel` 都靠这个版本号刷新。
 

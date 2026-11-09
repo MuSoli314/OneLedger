@@ -63,8 +63,8 @@ export default function ExpenseCategoryGroup({
   onRefresh,
   onCreateSubCategory,
 }: Props) {
-  // 该大类合计（ignore 类型不参与金额合计，与其它统计口径一致）
-  const l1Total = l1Items.reduce((s, e) => s + (txTypeByCode.get(e.type)?.category === 'ignore' ? 0 : e.amount), 0)
+  // 该大类合计（只算「计入支出」的记录，与日小计 / 蓝色卡 / 金额筛选口径一致；收入、不计类型不参与）
+  const l1Total = l1Items.reduce((s, e) => s + (txTypeByCode.get(e.type)?.category === 'expense' ? e.amount : 0), 0)
   // 按分类管理器中的小类顺序显示
   const cat = categories.find((c) => c.name === l1)
   const subOrder = new Map(cat?.children.map((c, i) => [c.name, i]) || [])

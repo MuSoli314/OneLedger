@@ -112,5 +112,5 @@ pages/ · components/ · contexts/  →  data/database.ts  →  webDb.ts ─┬�
 | [../components/AGENTS.md](../components/AGENTS.md) | 谁在调数据层，以及行内编辑、HoverTip、拖拽排序等 UI 约定 |
 | [../contexts/AGENTS.md](../contexts/AGENTS.md) | 分类 / 设置 / 首页筛选三个 Context 的缓存与 refresh 时机 |
 | [../pages/AGENTS.md](../pages/AGENTS.md) | 页面如何组合数据层查询（筛选链路、统计口径） |
-| [../../ARCHITECTURE.md](../../ARCHITECTURE.md) | 命名规范、数据流、双形态；⚠️ 其「数据库表结构」章节滞后（缺 `subcategory_rules` / `holidays` / `holiday_years`），以代码与本文件为准 |
+| [../../ARCHITECTURE.md](../../ARCHITECTURE.md) | 命名规范、数据流、双形态、表结构（与本章已对齐；以代码为准，不一致就修它） |
 | [../../CHANGELOG.md](../../CHANGELOG.md) | 历史版本改动都在这里；AGENTS.md 不堆变更流水账 |
